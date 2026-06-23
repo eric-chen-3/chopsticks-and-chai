@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Avatar Preview</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+      body {
+        min-height: 100vh;
+        overflow: auto;
+        padding: 24px;
+      }
+
+      .preview-grid {
+        width: min(980px, 100%);
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 18px;
+      }
+
+      .preview-card {
+        padding: 18px;
+        border-radius: 18px;
+        background: rgba(255, 248, 238, 0.92);
+        box-shadow: var(--shadow);
+        display: grid;
+        justify-items: center;
+        gap: 14px;
+        text-align: center;
+      }
+
+      .asset-sample {
+        width: min(360px, 100%);
+        aspect-ratio: 1 / 1;
+        border-radius: 18px;
+        background: url("assets/char1.jpg") center / cover;
+        box-shadow: 0 10px 24px rgba(91, 88, 109, 0.16);
+      }
+
+      .css-lineup {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .preview-card .character-avatar {
+        width: 92px;
+        height: 90px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="preview-grid">
+      <section class="preview-card">
+        <p class="eyebrow">Option A</p>
+        <h1>CSS Store Avatars</h1>
+        <div class="css-lineup">
+          <div class="character-avatar bear"><span class="ear left"></span><span class="ear right"></span><span class="snout"></span><span class="blush left"></span><span class="blush right"></span><span class="apron"></span></div>
+          <div class="character-avatar bunny"><span class="ear left"></span><span class="ear right"></span><span class="snout"></span><span class="blush left"></span><span class="blush right"></span><span class="apron"></span></div>
+          <div class="character-avatar cat"><span class="ear left"></span><span class="ear right"></span><span class="snout"></span><span class="blush left"></span><span class="blush right"></span><span class="apron"></span></div>
+          <div class="character-avatar panda"><span class="ear left"></span><span class="ear right"></span><span class="snout"></span><span class="blush left"></span><span class="blush right"></span><span class="apron"></span></div>
+        </div>
+        <p>Best for dynamic per-character happy/sad states and consistent in-game UI.</p>
+      </section>
+
+      <section class="preview-card">
+        <p class="eyebrow">Option B</p>
+        <h1>Reference Art Crop</h1>
+        <div class="asset-sample"></div>
+        <p>Best for richer illustration texture, but harder to make unique/sad versions per character in this mock.</p>
+      </section>
+    </main>
+  </body>
+</html>

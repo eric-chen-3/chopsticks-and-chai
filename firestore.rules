@@ -1,0 +1,183 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function optionalString(data, field, maxLength) {
+      return !(field in data)
+        || (data[field] is string && data[field].size() <= maxLength);
+    }
+
+    function optionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    function optionalList(data, field, maxLength) {
+      return !(field in data)
+        || (data[field] is list && data[field].size() <= maxLength);
+    }
+
+    function validUserProfile() {
+      return request.resource.data.keys().hasOnly([
+          "createdAt", "updatedAt", "email", "username", "tag", "selectedCharacterId",
+          "ownedCharacterIds", "economy", "verified", "presence"
+        ])
+        && optionalString(request.resource.data, "email", 120)
+        && optionalString(request.resource.data, "username", 18)
+        && optionalString(request.resource.data, "tag", 4)
+        && optionalString(request.resource.data, "selectedCharacterId", 40)
+        && optionalBool(request.resource.data, "verified")
+        && optionalList(request.resource.data, "ownedCharacterIds", 40);
+    }
+
+    function validFriend() {
+      return request.resource.data.keys().hasOnly([
+          "uid", "username", "tag", "status", "selectedCharacterId", "characterId", "createdAt"
+        ])
+        && request.resource.data.uid is string
+        && optionalString(request.resource.data, "username", 18)
+        && optionalString(request.resource.data, "tag", 4)
+        && optionalString(request.resource.data, "status", 40)
+        && optionalString(request.resource.data, "selectedCharacterId", 40)
+        && optionalString(request.resource.data, "characterId", 40);
+    }
+
+    function validSave() {
+      return request.resource.data.keys().hasOnly([
+          "id", "name", "savedAt", "updatedAt", "game"
+        ])
+        && request.resource.data.id is string
+        && request.resource.data.name is string
+        && request.resource.data.id.size() <= 80
+        && request.resource.data.name.size() <= 40;
+    }
+
+    function validNotification() {
+      return request.resource.data.keys().hasOnly([
+          "id", "type", "title", "text", "sender", "senderUid", "senderTag",
+          "recipient", "recipientUid", "status", "unread", "createdAt", "updatedAt",
+          "mode", "activeGame", "activeTurnPlayer", "lastGameStateAt", "participantUids",
+          "recipientCharacterId", "senderCharacterId"
+        ])
+        && request.resource.data.type in ["friendRequest", "gameInvite"]
+        && request.resource.data.senderUid == request.auth.uid
+        && optionalString(request.resource.data, "title", 60)
+        && optionalString(request.resource.data, "text", 180)
+        && optionalString(request.resource.data, "sender", 18)
+        && optionalString(request.resource.data, "senderTag", 4)
+        && optionalString(request.resource.data, "recipient", 18)
+        && optionalString(request.resource.data, "recipientUid", 128)
+        && optionalString(request.resource.data, "status", 40)
+        && optionalBool(request.resource.data, "unread")
+        && optionalBool(request.resource.data, "activeGame")
+        && optionalList(request.resource.data, "participantUids", 4);
+    }
+
+    function validPublicProfile() {
+      return request.resource.data.keys().hasOnly([
+          "uid", "username", "tag", "selectedCharacterId", "updatedAt"
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.username is string
+        && request.resource.data.tag is string
+        && request.resource.data.username.size() <= 18
+        && request.resource.data.tag.size() <= 4
+        && optionalString(request.resource.data, "selectedCharacterId", 40);
+    }
+
+    function validLobby() {
+      return request.resource.data.keys().hasOnly([
+          "id", "type", "title", "text", "sender", "senderUid", "senderTag",
+          "recipient", "recipientUid", "status", "unread", "createdAt", "updatedAt",
+          "mode", "activeGame", "activeTurnPlayer", "lastGameStateAt", "participantUids",
+          "recipientCharacterId", "senderCharacterId", "chat", "closedFor", "minimizedFor",
+          "joinedFor", "readyFor", "declined", "inGameFor", "absentPlayers",
+          "gameState"
+        ])
+        && request.resource.data.type == "gameInvite"
+        && request.resource.data.id is string
+        && request.resource.data.senderUid is string
+        && request.resource.data.participantUids is list
+        && request.resource.data.id.size() <= 100
+        && request.resource.data.senderUid.size() <= 128
+        && request.resource.data.participantUids.size() <= 4
+        && optionalString(request.resource.data, "sender", 18)
+        && optionalString(request.resource.data, "senderTag", 4)
+        && optionalString(request.resource.data, "recipient", 18)
+        && optionalString(request.resource.data, "recipientUid", 128)
+        && optionalString(request.resource.data, "status", 40)
+        && optionalString(request.resource.data, "mode", 40)
+        && optionalBool(request.resource.data, "unread")
+        && optionalBool(request.resource.data, "declined")
+        && optionalBool(request.resource.data, "activeGame")
+        && optionalList(request.resource.data, "chat", 40)
+        && optionalList(request.resource.data, "closedFor", 4)
+        && optionalList(request.resource.data, "minimizedFor", 4)
+        && optionalList(request.resource.data, "joinedFor", 4)
+        && optionalList(request.resource.data, "readyFor", 4)
+        && optionalList(request.resource.data, "inGameFor", 4);
+    }
+
+    match /users/{userId} {
+      allow read, delete: if isUser(userId);
+      allow create, update: if isUser(userId) && validUserProfile();
+
+      match /friends/{friendId} {
+        allow read, delete: if isUser(userId);
+        allow create, update: if isUser(userId) && validFriend();
+        allow create, update: if signedIn() && request.auth.uid == friendId && validFriend();
+        allow delete: if signedIn() && request.auth.uid == friendId;
+      }
+
+      match /saves/{saveId} {
+        allow read, delete: if isUser(userId);
+        allow create, update: if isUser(userId) && validSave();
+      }
+
+      match /notifications/{notificationId} {
+        allow read, update, delete: if isUser(userId);
+        allow create: if signedIn() && validNotification();
+      }
+    }
+
+    match /publicProfiles/{profileId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && validPublicProfile();
+      allow delete: if signedIn()
+        && resource.data.uid == request.auth.uid;
+    }
+
+    match /lobbies/{lobbyId} {
+      allow read: if signedIn()
+        && request.auth.uid in resource.data.participantUids;
+      allow create: if signedIn()
+        && validLobby()
+        && request.auth.uid in request.resource.data.participantUids
+        && request.resource.data.senderUid == request.auth.uid;
+      allow update: if signedIn()
+        && request.auth.uid in resource.data.participantUids
+        && validLobby();
+      allow delete: if signedIn()
+        && request.auth.uid in resource.data.participantUids;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.participantUids;
+        allow create: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.participantUids
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 120;
+        allow delete: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.participantUids;
+      }
+    }
+  }
+}

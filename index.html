@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Chopsticks &amp; Chai</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;500;600;700;800&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="mock-switcher" id="globalMockSwitcher" aria-label="Account">
+        <span id="globalMockAccountLabel">Mock: you</span>
+        <button id="globalSwitchAccount" type="button">Switch</button>
+      </section>
+
+      <section class="menu-screen" id="mainMenuScreen">
+        <div class="menu-card main-menu-card">
+          <button class="icon-button notification-corner" id="menuNotifications" type="button" aria-label="Notifications">
+            <span id="notificationBadge" aria-hidden="true" hidden>!</span>
+          </button>
+          <div class="cafe-window" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="mascot-wrap">
+            <div class="menu-mascot character-avatar bear" id="menuMascot" aria-hidden="true">
+              <span class="ear left"></span>
+              <span class="ear right"></span>
+              <span class="face"></span>
+              <span class="snout"></span>
+              <span class="blush left"></span>
+              <span class="blush right"></span>
+              <span class="apron"></span>
+            </div>
+          </div>
+          <h1>Chopsticks &amp; Chai</h1>
+          <div class="active-lobby-prompts" id="activeLobbyPrompts"></div>
+          <div class="menu-actions">
+            <button id="menuNewGame" type="button">New Game</button>
+            <button id="menuLoadGame" type="button">Load Game</button>
+            <button id="menuStore" type="button">Store</button>
+            <button id="menuFriends" type="button">Friends</button>
+            <button id="menuProfile" type="button">Profile</button>
+            <button id="menuSettings" type="button">Settings</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="profileScreen" hidden>
+        <div class="menu-card">
+          <p class="eyebrow">Profile</p>
+          <h1>Your Cafe Card</h1>
+          <p class="form-message" id="profileMessage"></p>
+          <div class="profile-summary" id="profileSummary"></div>
+          <div class="level-panel">
+            <div>
+              <strong id="profileLevel">Level 1</strong>
+              <span id="profileExpText">0 / 100 EXP</span>
+            </div>
+            <div class="level-bar"><span id="profileExpFill"></span></div>
+            <div class="profile-stat-row">
+              <span id="profileCoins">0 <span class="coin-icon" aria-label="coin">🪙</span></span>
+              <span id="profileWinStreak" hidden></span>
+            </div>
+          </div>
+          <div class="mock-testing-panel">
+            <strong>Mock Testing</strong>
+            <div>
+              <button class="ghost-button" id="resetMockLevel" type="button">Reset Level</button>
+              <button class="ghost-button" id="resetMockCoins" type="button">Reset <span class="coin-icon" aria-label="coin">🪙</span></button>
+            </div>
+          </div>
+          <div class="achievement-panel">
+            <strong>Achievements</strong>
+            <div id="profileAchievements"></div>
+          </div>
+          <label class="setting-row profile-field" id="profileUsernameField">
+            <span>Username</span>
+            <input id="profileUsername" maxlength="18" placeholder="honeybear">
+          </label>
+          <label class="setting-row profile-field" id="profileTagField">
+            <span>Tag</span>
+            <input id="profileTag" maxlength="4" placeholder="A7K2">
+          </label>
+          <label class="setting-row profile-field" id="profilePhoneSection">
+            <span>Email</span>
+            <input id="profilePhone" type="email" maxlength="80" placeholder="you@example.com" autocomplete="email">
+          </label>
+          <label class="setting-row" id="verifyPhoneSection">
+            <span>Password</span>
+            <button id="sendVerification" type="button">Create Account</button>
+          </label>
+          <div class="verify-row" id="verifyRow">
+            <input id="verificationCode" type="password" minlength="6" maxlength="64" placeholder="Password" autocomplete="current-password">
+            <button id="verifyCode" type="button">Sign In</button>
+          </div>
+          <div class="menu-actions">
+            <button id="saveProfile" type="button">Save Profile</button>
+            <button class="overwrite-action" id="deleteFirebaseAccount" type="button" hidden>Delete Account</button>
+            <button class="ghost-button" id="profileBack" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="friendsScreen" hidden>
+        <div class="menu-card store-card">
+          <div class="card-title-row">
+            <div>
+              <p class="eyebrow">Friends</p>
+              <h1>Cafe Friends</h1>
+            </div>
+            <button class="add-friend-icon" id="openAddFriend" type="button" aria-label="Add friend">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M15 19a6 6 0 0 0-12 0"></path>
+                <circle cx="9" cy="8" r="4"></circle>
+                <path d="M19 8v6"></path>
+                <path d="M16 11h6"></path>
+              </svg>
+            </button>
+          </div>
+          <p class="form-message" id="friendsMessage"></p>
+          <div class="pending-requests" id="pendingFriendRequests"></div>
+          <div class="friend-list" id="friendList"></div>
+          <div class="achievement-panel friends-achievements">
+            <strong>Achievements</strong>
+            <div>Friend achievements will live here later.</div>
+          </div>
+          <button class="ghost-button" id="friendsBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="notificationsScreen" hidden>
+        <div class="menu-card store-card">
+          <p class="eyebrow">Notifications</p>
+          <h1>Inbox</h1>
+          <div class="notification-list" id="notificationList"></div>
+          <button class="overwrite-action" id="deleteAllNotifications" type="button">Delete All Messages</button>
+          <button class="ghost-button" id="notificationsBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="waitingLobbyScreen" hidden>
+        <div class="menu-card">
+          <p class="eyebrow">Separate Devices</p>
+          <h1>Game Lobby</h1>
+          <p class="form-message" id="lobbyStatusText">Waiting for friend to accept.</p>
+          <button class="add-player-button" id="lobbyInvitePlayer" type="button" hidden>
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M15 19a6 6 0 0 0-12 0"></path>
+              <circle cx="9" cy="8" r="4"></circle>
+              <path d="M19 8v6"></path>
+              <path d="M16 11h6"></path>
+            </svg>
+            <span>Invite a player to play</span>
+          </button>
+          <div class="lobby-roster" id="lobbyRoster"></div>
+          <button class="chat-room-button" id="openLobbyChat" type="button">Open Chat Room</button>
+          <div class="menu-actions">
+            <button class="save-action" id="readyLobbyGame" type="button" hidden>Ready</button>
+            <button class="save-action" id="startLobbyGame" type="button" disabled>Start Game</button>
+            <button class="save-action" id="returnActiveGame" type="button" hidden>Return to Game</button>
+            <button class="ghost-button" id="lobbyBack" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="menu-screen store-screen" id="storeScreen" hidden>
+        <div class="menu-card store-card">
+          <p class="eyebrow">Store</p>
+          <h1>Buy Avatar</h1>
+          <p class="store-balance" id="storeCoinBalance">0 <span class="coin-icon" aria-label="coin">🪙</span></p>
+          <p class="form-message" id="storeMessage"></p>
+          <div class="character-store" id="characterStore"></div>
+          <button class="save-character-button" id="saveCharacter" type="button">Save Character</button>
+          <button class="ghost-button" id="storeBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="modeScreen" hidden>
+        <div class="menu-card">
+          <p class="eyebrow">Choose Game Mode</p>
+          <h1>Game Mode</h1>
+          <div class="menu-actions">
+            <button id="standardMode" type="button">Standard Mode</button>
+            <button id="powerMode" type="button">Power Up Mode</button>
+            <button class="ghost-button" id="modeBack" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="submodeScreen" hidden>
+        <div class="menu-card">
+          <p class="eyebrow" id="submodeModeLabel">Standard Mode</p>
+          <h1>Choose Submode</h1>
+          <div class="menu-actions">
+            <button id="passPlayMode" type="button">Pass and Play</button>
+            <button id="separateDevicesMode" type="button">Separate Devices</button>
+            <button class="ghost-button" id="submodeBack" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="loadScreen" hidden>
+        <div class="menu-card">
+          <p class="eyebrow">Load Game</p>
+          <h1>Saved Games</h1>
+          <div class="save-list" id="saveList"></div>
+          <button class="ghost-button" id="loadBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="settingsScreen" hidden>
+        <div class="menu-card settings-card">
+          <p class="eyebrow">Settings</p>
+          <h1>Game Settings</h1>
+          <label class="setting-row">
+            <span>Music Volume</span>
+            <input id="musicVolume" type="range" min="0" max="100">
+          </label>
+          <label class="setting-row">
+            <span>Sound Effects</span>
+            <input id="sfxVolume" type="range" min="0" max="100">
+          </label>
+          <label class="setting-row">
+            <span>Reduce Motion</span>
+            <input id="reduceMotion" type="checkbox">
+          </label>
+          <label class="setting-row">
+            <span>Show Hints</span>
+            <input id="showHints" type="checkbox">
+          </label>
+          <div class="menu-actions legal-actions">
+            <button class="ghost-button" id="openPrivacyPolicy" type="button">Privacy</button>
+            <button class="ghost-button" id="openTerms" type="button">Terms</button>
+            <button class="ghost-button" id="openSupport" type="button">Support</button>
+          </div>
+          <div class="menu-actions">
+            <button id="resetSettings" type="button">Reset Settings</button>
+            <button class="ghost-button" id="settingsBack" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="game-screen" id="gameScreen" hidden>
+        <section class="top-bar" aria-label="Game status">
+          <div>
+            <p class="eyebrow" id="gameModeLabel">Standard Game Mode</p>
+            <h1>Chopsticks &amp; Chai</h1>
+          </div>
+          <div class="game-top-actions">
+            <div class="turn-card">
+              <small>Pass and Play</small>
+              <span id="turnLabel">Player 1's turn</span>
+              <strong id="phaseLabel">Choose an action</strong>
+            </div>
+            <div class="gear-wrap">
+              <button class="gear-button" id="gameMenuButton" type="button" aria-label="Game menu">
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
+                  <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.17.39.5.72.9.9.35.16.73.23 1.1.2H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51.9Z"></path>
+                </svg>
+              </button>
+              <div class="game-menu-dropdown" id="gameMenuDropdown" hidden>
+                <button id="gameReturnMenu" type="button">Return to Main Menu</button>
+                <button id="gameSettings" type="button">Settings</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="battlefield" aria-label="Battlefield">
+          <article class="player-zone opponent-zone" id="player1Zone">
+            <div class="player-header">
+              <p class="eyebrow">Player 1</p>
+              <h2 id="p1Name">Sakura Set</h2>
+              <span class="score-chip" id="p1Status"></span>
+            </div>
+            <div class="hands" id="p1Hands"></div>
+          </article>
+
+          <aside class="center-panel">
+            <div class="play-orb">
+              <span id="actionHint">Tap one of your live chopstick fans.</span>
+            </div>
+            <div class="split-choices" id="splitChoices" hidden></div>
+            <div class="message-log" id="messageLog" aria-live="polite"></div>
+            <button class="end-turn" id="endTurn" type="button">End Turn</button>
+          </aside>
+
+          <div class="power-panel" id="powerPanel" hidden>
+            <div class="energy-row" id="energyRow"></div>
+            <div class="power-cards" id="powerCards"></div>
+            <p class="deck-line" id="deckLine"></p>
+          </div>
+
+          <article class="player-zone current-zone" id="player2Zone">
+            <div class="player-header">
+              <p class="eyebrow">Player 2</p>
+              <h2 id="p2Name">Bamboo Set</h2>
+              <span class="score-chip" id="p2Status"></span>
+            </div>
+            <div class="hands" id="p2Hands"></div>
+          </article>
+        </section>
+      </section>
+
+      <dialog class="game-over" id="gameOverDialog">
+        <form method="dialog">
+          <div class="game-over-avatar" id="gameOverAvatar"></div>
+          <h2 id="winnerTitle">Player wins</h2>
+          <p id="winnerText">Both opposing hands are dead.</p>
+          <div class="reward-panel" id="rewardPanel" hidden>
+            <div class="reward-row">
+              <strong id="rewardXpLabel">+0 XP</strong>
+              <span id="rewardLevelLabel">Level 1</span>
+            </div>
+            <div class="level-bar reward-xp-bar"><span id="rewardXpFill"></span></div>
+            <p id="rewardXpText"></p>
+            <div class="coin-reward-row" id="coinRewardRow">
+              <span class="coin-pile" id="coinPile"></span>
+              <strong id="rewardCoinText">Total: 0 🪙 (+0 🪙)</strong>
+            </div>
+          </div>
+          <button class="save-action" id="returnToLobby" value="lobby" type="submit" hidden>Return to Lobby</button>
+          <button class="game-over-new" id="newGame" value="new" type="submit">Start New Game</button>
+          <button class="game-over-menu" id="gameOverMenu" value="menu" type="submit">Return to Main Menu</button>
+        </form>
+      </dialog>
+
+      <aside class="forfeit-timer-panel" id="forfeitTimerPanel" hidden>
+        <button class="forfeit-hide" id="hideForfeitTimer" type="button" aria-label="Hide timer">×</button>
+        <h2>Opponent Away</h2>
+        <p id="forfeitTimerText">The other player has 30 seconds to return before forfeit.</p>
+        <div class="forfeit-timer">
+          <span id="forfeitTimerFill"></span>
+        </div>
+        <strong id="forfeitTimerCount">30</strong>
+      </aside>
+
+      <dialog id="declineGameDialog">
+        <form method="dialog">
+          <h2>Decline Return?</h2>
+          <p>Declining will count as a forfeit loss for you.</p>
+          <button class="overwrite-action" id="confirmDeclineGame" value="decline" type="button">Decline</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="hostClosedDialog">
+        <form method="dialog">
+          <h2>Lobby Closed</h2>
+          <p>The host has closed the lobby.</p>
+          <button class="ghost-button" id="hostClosedOkay" value="ok" type="submit">Okay</button>
+        </form>
+      </dialog>
+
+      <dialog id="publicProfileDialog">
+        <form method="dialog">
+          <div id="publicProfileContent"></div>
+          <button class="ghost-button" value="close" type="submit">Close</button>
+        </form>
+      </dialog>
+
+      <dialog id="savePromptDialog">
+        <form method="dialog">
+          <h2>Return to Main Menu?</h2>
+          <p>Leave this match or save it for later?</p>
+          <div class="save-name-fields" id="saveNameFields" hidden>
+            <label for="saveNameInput">Save name</label>
+            <input id="saveNameInput" maxlength="28" placeholder="Save name">
+          </div>
+          <button class="leave-action" id="leaveWithoutSave" value="leave" type="submit" autofocus>Leave Without Saving</button>
+          <button class="save-action" id="saveAndLeave" value="save" type="submit">Save and Leave</button>
+          <button class="ghost-button" id="savePromptBack" value="back" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="overwriteDialog">
+        <form method="dialog">
+          <h2>Choose Save Slot</h2>
+          <p>Only 3 saves are allowed. Choose one to overwrite.</p>
+          <div class="save-list" id="overwriteList"></div>
+          <button class="ghost-button" id="overwriteBack" value="back" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="existingSaveDialog">
+        <form method="dialog">
+          <h2>Save Existing Game?</h2>
+          <p id="existingSaveText">This game already has a save file.</p>
+          <button class="overwrite-action" id="overwriteExistingSave" value="overwrite" type="submit">Overwrite Existing Save</button>
+          <button class="save-action" id="createSeparateSave" value="new" type="submit">Create New Save</button>
+          <button class="ghost-button" id="existingSaveBack" value="back" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="renameSaveDialog">
+        <form method="dialog">
+          <h2>Rename Save</h2>
+          <input id="renameSaveInput" maxlength="28" placeholder="Save name">
+          <button id="confirmRenameSave" value="rename" type="submit">Rename</button>
+          <button value="cancel" type="submit">Cancel</button>
+        </form>
+      </dialog>
+
+      <dialog id="cardDetailDialog">
+        <form method="dialog">
+          <div class="large-card" id="largeCard"></div>
+          <button id="playCardButton" value="play" type="submit">Play Card</button>
+          <button value="cancel" type="submit">Close</button>
+        </form>
+      </dialog>
+
+      <dialog id="startupNoticeDialog">
+        <form method="dialog">
+          <h2 id="startupNoticeTitle">Power Up Mode</h2>
+          <p id="startupNoticeIntro">Power Up Mode changes the base rules:</p>
+          <ul id="startupNoticeList"></ul>
+          <p class="startup-notice-copy" id="startupNoticeFootnote"></p>
+          <button class="save-action" id="startNoticeGame" value="start" type="submit">Start Playing</button>
+          <button class="ghost-button" id="backStartupNotice" value="back" type="button">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="inviteFriendDialog">
+        <form method="dialog">
+          <h2>Invite Friend</h2>
+          <p>Choose a cafe friend to invite.</p>
+          <div class="invite-friend-list" id="inviteFriendList"></div>
+          <button id="inviteAddFriend" value="add" type="button">Add Friend</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="inviteSentDialog">
+        <form method="dialog">
+          <h2>Invite Sent</h2>
+          <p id="inviteSentText">Your friend received a game invite.</p>
+          <button class="save-action" value="close" type="submit">Okay</button>
+        </form>
+      </dialog>
+
+      <dialog id="addFriendDialog">
+        <form method="dialog">
+          <h2>Add Friend</h2>
+          <p class="form-message" id="addFriendMessage"></p>
+          <input id="friendUsername" maxlength="32" placeholder="friend#A7K2">
+          <button id="addFriend" value="add" type="submit">Add Friend</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="unknownUserDialog">
+        <form method="dialog">
+          <h2>User Not Found</h2>
+          <p>That username does not exist.</p>
+          <button class="ghost-button" value="ok" type="submit">Okay</button>
+        </form>
+      </dialog>
+
+      <dialog id="invalidInputDialog">
+        <form method="dialog">
+          <h2>Invalid Entry</h2>
+          <p id="invalidInputText">That entry contains characters that are not allowed.</p>
+          <button class="ghost-button" value="ok" type="submit">Okay</button>
+        </form>
+      </dialog>
+
+      <dialog id="editHandleDialog">
+        <form method="dialog">
+          <h2 id="editHandleTitle">Edit Profile</h2>
+          <p class="form-message" id="editHandleMessage"></p>
+          <input id="editHandleInput" maxlength="18" placeholder="username">
+          <button class="save-action" id="confirmHandleEdit" value="save" type="submit">Save</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="switchAccountDialog">
+        <form method="dialog">
+          <h2>Mock Account Switcher</h2>
+          <p>Switch accounts to test the receiving friend's inbox.</p>
+          <div class="invite-friend-list" id="mockAccountList"></div>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="renameAccountDialog">
+        <form method="dialog">
+          <h2>Rename Account</h2>
+          <p class="form-message" id="renameAccountMessage"></p>
+          <input id="renameAccountInput" maxlength="18" placeholder="New username">
+          <button id="confirmRenameAccount" value="rename" type="submit">Rename</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="deleteAccountDialog">
+        <form method="dialog">
+          <h2>Delete Account</h2>
+          <p>This permanently deletes your account, profile, saves, friends, notifications, and active lobbies from Firebase.</p>
+          <p class="form-message" id="deleteAccountMessage"></p>
+          <button class="overwrite-action" id="confirmDeleteFirebaseAccount" value="delete" type="button">Delete Account</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+
+      <dialog id="legalDialog">
+        <form method="dialog">
+          <h2 id="legalDialogTitle">Privacy</h2>
+          <div class="legal-copy" id="legalDialogContent"></div>
+          <button class="ghost-button" value="close" type="submit">Close</button>
+        </form>
+      </dialog>
+
+      <dialog id="lobbyChatDialog">
+        <form method="dialog">
+          <h2>Lobby Chat</h2>
+          <div class="chat-players" id="lobbyChatPlayers"></div>
+          <div class="chat-log" id="lobbyChatLog"></div>
+          <div class="emoji-row" id="lobbyEmojiRow">
+            <button type="button" data-emoji="❤️">❤️</button>
+            <button type="button" data-emoji="👍">👍</button>
+            <button type="button" data-emoji="😂">😂</button>
+            <button type="button" data-emoji="🎉">🎉</button>
+            <button type="button" data-emoji="😮">😮</button>
+            <button type="button" data-emoji="😡">😡</button>
+            <button type="button" data-emoji="☕">☕</button>
+            <button type="button" data-emoji="🥢">🥢</button>
+            <button type="button" data-emoji="💩">💩</button>
+          </div>
+          <div class="chat-input-row">
+            <input id="lobbyChatInput" maxlength="120" placeholder="Type a message or react like <3, :)">
+            <button id="sendLobbyChat" type="submit">Send</button>
+          </div>
+          <button class="ghost-button" value="close" type="submit">Close</button>
+        </form>
+      </dialog>
+
+      <dialog id="lobbyBackDialog">
+        <form method="dialog">
+          <h2>Leave Lobby?</h2>
+          <p>Return later or close this lobby?</p>
+          <button class="save-action" id="returnLaterLobby" value="return" type="submit">Return Later</button>
+          <button class="overwrite-action" id="closeLobby" value="close" type="submit">Close Lobby</button>
+          <button class="ghost-button" value="cancel" type="submit">Back</button>
+        </form>
+      </dialog>
+    </main>
+
+    <script type="module" src="game.js"></script>
+  </body>
+</html>

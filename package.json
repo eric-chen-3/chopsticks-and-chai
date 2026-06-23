@@ -1,0 +1,23 @@
+{
+  "name": "chopsticks-and-chai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chopsticks & Chai mobile app shell.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build --outDir www --emptyOutDir",
+    "cap:sync": "npm run build && cap sync",
+    "cap:open:ios": "npm run build && cap open ios",
+    "firebase:smoke": "node scripts/firebase-smoke-test.mjs",
+    "testflight:prep": "npm run build && cap sync ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "firebase": "^12.15.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "vite": "^8.0.16"
+  }
+}

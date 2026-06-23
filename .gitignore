@@ -1,0 +1,9 @@
+node_modules/
+www/
+.npm-cache/
+.pnpm-store/
+
+# Native build artifacts
+ios/App/build/
+ios/Pods/
+ios/DerivedData/
