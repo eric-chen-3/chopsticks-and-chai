@@ -1,9 +1,11 @@
 import { initializeApp } from "firebase/app";
 import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
 import {
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   deleteUser,
-  getAuth,
+  indexedDBLocalPersistence,
+  initializeAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
@@ -37,8 +39,12 @@ const firebaseConfig = {
   measurementId: "G-QWWESBQV3X",
 };
 
+const firestoreRestBase = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+
 export const firebaseApp = initializeApp(firebaseConfig);
-export const auth = getAuth(firebaseApp);
+export const auth = initializeAuth(firebaseApp, {
+  persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+});
 export const db = initializeFirestore(firebaseApp, {
   experimentalForceLongPolling: true,
   useFetchStreams: false,
@@ -59,7 +65,7 @@ export async function signUpWithEmail(email, password, profile = {}) {
     await updateProfile(credential.user, { displayName: nextProfile.username });
   }
   try {
-    await upsertUserProfile(credential.user.uid, {
+    await upsertUserProfileRest(credential.user, {
       email: credential.user.email,
       ...nextProfile,
     });
@@ -81,6 +87,10 @@ export function signOutCurrentUser() {
 }
 
 export async function loadUserProfile(uid) {
+  const currentUser = auth.currentUser;
+  if (currentUser && currentUser.uid === uid) {
+    return loadUserProfileRest(currentUser);
+  }
   const snapshot = await getDoc(doc(db, "users", uid));
   return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
 }
@@ -203,8 +213,162 @@ export async function findPublicProfile(username, tag) {
 }
 
 export async function isUsernameTaken(username) {
-  const snapshot = await getDoc(doc(db, "usernameHandles", publicProfileId(username)));
-  return snapshot.exists();
+  const snapshot = await getRestDocument(["usernameHandles", publicProfileId(username)]);
+  return Boolean(snapshot);
+}
+
+async function loadUserProfileRest(user) {
+  const snapshot = await getRestDocument(["users", user.uid], await user.getIdToken());
+  return snapshot ? { id: user.uid, ...snapshot } : null;
+}
+
+async function upsertUserProfileRest(user, profile) {
+  const token = await user.getIdToken();
+  const username = profile.username ? publicProfileId(profile.username) : "";
+  const timestamp = new Date().toISOString();
+  const privateProfile = sanitizeForFirestore({
+    createdAt: profile.createdAt || timestamp,
+    ...profile,
+    updatedAt: timestamp,
+  });
+  const writes = [
+    restUpdateWrite(["users", user.uid], privateProfile),
+  ];
+
+  if (username) {
+    const [usernameHandle, publicProfile] = await Promise.all([
+      getRestDocument(["usernameHandles", username], token),
+      getRestDocument(["publicProfiles", username], token),
+    ]);
+    if (usernameHandle && usernameHandle.uid && usernameHandle.uid !== user.uid) {
+      throwUsernameTaken();
+    }
+    if (publicProfile && publicProfile.uid && publicProfile.uid !== user.uid) {
+      throwUsernameTaken();
+    }
+    const publicProfilePayload = {
+      uid: user.uid,
+      username,
+      tag: profile.tag || "",
+      selectedCharacterId: profile.selectedCharacterId || "honeyBear",
+      updatedAt: timestamp,
+    };
+    const usernameHandlePayload = {
+      uid: user.uid,
+      username,
+      updatedAt: timestamp,
+    };
+    writes.push(restUpdateWrite(["publicProfiles", username], publicProfilePayload, publicProfile ? "exists" : "missing"));
+    writes.push(restUpdateWrite(["usernameHandles", username], usernameHandlePayload, usernameHandle ? "exists" : "missing"));
+  }
+
+  await commitRestWrites(writes, token);
+}
+
+async function getRestDocument(pathParts, token = "") {
+  const response = await fetch(restDocumentUrl(pathParts), {
+    headers: restHeaders(token),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw await restError(response);
+  const data = await response.json();
+  return restFieldsToObject(data.fields || {});
+}
+
+async function commitRestWrites(writes, token) {
+  const response = await fetch(`${firestoreRestBase}:commit`, {
+    method: "POST",
+    headers: restHeaders(token),
+    body: JSON.stringify({ writes }),
+  });
+  if (!response.ok) {
+    const error = await restError(response);
+    if (error.status === 400 || error.status === 409) throwUsernameTaken();
+    throw error;
+  }
+}
+
+function restUpdateWrite(pathParts, value, precondition = "") {
+  const write = {
+    update: {
+      name: restDocumentName(pathParts),
+      fields: objectToRestFields(value),
+    },
+  };
+  if (precondition === "missing") write.currentDocument = { exists: false };
+  if (precondition === "exists") write.currentDocument = { exists: true };
+  return write;
+}
+
+function restDocumentUrl(pathParts) {
+  return `${firestoreRestBase}/${restPath(pathParts)}`;
+}
+
+function restDocumentName(pathParts) {
+  return `projects/${firebaseConfig.projectId}/databases/(default)/documents/${restPath(pathParts)}`;
+}
+
+function restPath(pathParts) {
+  return pathParts.map((part) => encodeURIComponent(String(part))).join("/");
+}
+
+function restHeaders(token = "") {
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function restError(response) {
+  let body = {};
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+  const error = new Error(body.error && body.error.message ? body.error.message : `Firestore REST request failed: ${response.status}`);
+  error.code = body.error && body.error.status ? body.error.status.toLowerCase().replaceAll("_", "-") : "app/rest-error";
+  error.status = response.status;
+  return error;
+}
+
+function throwUsernameTaken() {
+  const error = new Error("Username is already taken.");
+  error.code = "app/username-taken";
+  throw error;
+}
+
+function objectToRestFields(value) {
+  return Object.fromEntries(
+    Object.entries(sanitizeForFirestore(value))
+      .filter(([, item]) => item !== undefined)
+      .map(([key, item]) => [key, toRestValue(item)]),
+  );
+}
+
+function toRestValue(value) {
+  if (value === null) return { nullValue: null };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(toRestValue) } };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number" && Number.isInteger(value)) return { integerValue: String(value) };
+  if (typeof value === "number") return { doubleValue: value };
+  if (typeof value === "object") return { mapValue: { fields: objectToRestFields(value) } };
+  return { stringValue: String(value) };
+}
+
+function restFieldsToObject(fields) {
+  return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, fromRestValue(value)]));
+}
+
+function fromRestValue(value) {
+  if (Object.hasOwn(value, "nullValue")) return null;
+  if (Object.hasOwn(value, "booleanValue")) return value.booleanValue;
+  if (Object.hasOwn(value, "integerValue")) return Number(value.integerValue);
+  if (Object.hasOwn(value, "doubleValue")) return value.doubleValue;
+  if (Object.hasOwn(value, "timestampValue")) return value.timestampValue;
+  if (Object.hasOwn(value, "arrayValue")) return (value.arrayValue.values || []).map(fromRestValue);
+  if (Object.hasOwn(value, "mapValue")) return restFieldsToObject(value.mapValue.fields || {});
+  return value.stringValue || "";
 }
 
 export async function listFriends(uid) {
