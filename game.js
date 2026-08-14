@@ -2233,6 +2233,7 @@ function startFirebaseAuthListener() {
       stopFirebaseDataListeners();
       stopPresenceHeartbeat();
       clearFirebaseRuntimeData();
+      resetSignedOutAuthView();
       previousScreen = "mainMenuScreen";
       showScreen("profileScreen");
       return;
@@ -2768,6 +2769,16 @@ function setAuthFlowMode(mode) {
   if (mode !== "createPassword") pendingCreateAccount = null;
   document.querySelector("#profileMessage").textContent = authIntroMessage();
   renderAuthFlowPanels();
+}
+
+function resetSignedOutAuthView() {
+  authFlowMode = "landing";
+  pendingCreateAccount = null;
+  removeStorageKey(ACTIVE_USER_KEY);
+  document.querySelector("#loginEmail").value = "";
+  document.querySelector("#loginPassword").value = "";
+  document.querySelector("#createPassword").value = "";
+  document.querySelector("#confirmCreatePassword").value = "";
 }
 
 function renderAuthFlowPanels() {
@@ -4137,6 +4148,7 @@ document.querySelector("#notificationsBack").addEventListener("click", () => sho
 document.querySelector("#notificationsBack").addEventListener("click", playMenuSound);
 document.querySelector("#globalSwitchAccount").addEventListener("click", async () => {
   if (firebaseUser) {
+    resetSignedOutAuthView();
     await signOutCurrentUser();
     return;
   }
