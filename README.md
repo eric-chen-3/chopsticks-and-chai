@@ -1,6 +1,6 @@
 # Chopsticks & Chai
 
-A cozy mobile chopsticks game with cafe-themed characters, Firebase accounts, friends, lobbies, saves, and Capacitor iOS support.
+A cozy mobile chopsticks game with cafe-themed characters, Firebase accounts, friends, lobbies, automatic progress, and Capacitor iOS support.
 
 ## Development
 

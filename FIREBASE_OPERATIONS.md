@@ -41,6 +41,6 @@ Signed-in account deletion removes:
 - the Firebase Auth user,
 - the private `users/{uid}` profile,
 - `publicProfiles/{username_tag}`,
-- owned `friends`, `notifications`, and `saves`,
+- owned `friends` and `notifications`,
 - reverse friend docs where rules allow the deleting user to remove themselves,
 - participant lobbies visible to the user, after deleting lobby messages.

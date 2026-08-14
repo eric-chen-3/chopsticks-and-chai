@@ -396,6 +396,28 @@ h2 {
   z-index: 2;
 }
 
+.quest-corner {
+  position: absolute;
+  top: 150px;
+  right: 14px;
+  z-index: 2;
+}
+
+.quest-corner::before,
+.quest-corner::after {
+  display: none;
+}
+
+.quest-corner svg {
+  width: 25px;
+  height: 25px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .menu-actions button,
 .ghost-button {
   background: rgba(255, 255, 255, 0.86);
@@ -436,6 +458,17 @@ button.save-action {
   font-weight: 900;
 }
 
+.danger-action {
+  background: #d93645;
+  box-shadow: 0 5px 0 rgba(122, 38, 48, 0.28);
+  color: #fffefa;
+  font-weight: 900;
+}
+
+#settingsSignOut {
+  color: var(--ink);
+}
+
 .overwrite-action {
   background: #ffcfd2;
   box-shadow: 0 5px 0 rgba(151, 70, 76, 0.2);
@@ -444,10 +477,16 @@ button.save-action {
 
 .coin-icon {
   display: inline-block;
-  margin: 0 0.12em;
-  font-size: 1.05em;
-  line-height: 1;
-  vertical-align: -0.08em;
+  width: 1.08em;
+  height: 1.08em;
+  margin: 0 0.16em;
+  border: 1px solid rgba(137, 91, 30, 0.28);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.72) 0 13%, transparent 14%),
+    radial-gradient(circle at 50% 50%, #ffe99a 0 44%, #ffd45e 45% 68%, #d99b31 69% 100%);
+  box-shadow: inset 0 -0.12em 0 rgba(137, 91, 30, 0.16), 0 0.08em 0 rgba(91, 88, 109, 0.12);
+  vertical-align: -0.16em;
 }
 
 .settings-card {
@@ -967,6 +1006,229 @@ button.save-action {
   color: var(--muted);
   font-size: 0.84rem;
   font-weight: 800;
+}
+
+.achievement-list {
+  display: grid;
+  gap: 7px;
+}
+
+.quest-section {
+  display: grid;
+  gap: 8px;
+}
+
+.quest-section h2 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.quest-row {
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.quest-row.claimed {
+  background: rgba(207, 233, 201, 0.58);
+}
+
+.quest-row .achievement-description,
+.quest-row .achievement-rewards {
+  filter: none !important;
+  opacity: 1 !important;
+  user-select: auto !important;
+}
+
+.achievement-row {
+  min-height: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background: rgba(238, 236, 241, 0.76);
+  box-shadow: 0 5px 0 rgba(91, 88, 109, 0.1);
+  display: block;
+}
+
+.achievement-card-text {
+  display: grid;
+  gap: 3px;
+}
+
+.achievement-row strong,
+.achievement-row span {
+  display: block;
+}
+
+.achievement-row span,
+.achievement-description {
+  color: #9a91a3;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.achievement-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.achievement-rewards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  margin-top: 0;
+  color: #9a91a3;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.quest-reward-stack {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+}
+
+.quest-claim-button {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: #63b36e;
+  box-shadow: 0 4px 0 rgba(55, 111, 63, 0.24);
+  color: #fffefa;
+  display: grid;
+  place-items: center;
+}
+
+.quest-claim-button svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.achievement-reward {
+  display: inline-block !important;
+  white-space: nowrap;
+}
+
+.achievement-row .coin-icon {
+  display: inline-block !important;
+  flex: 0 0 auto;
+}
+
+.achievement-row.earned {
+  border-color: #e7b93f;
+  background: rgba(255, 250, 228, 0.86);
+  box-shadow: 0 5px 0 rgba(189, 139, 42, 0.22);
+}
+
+.achievement-row strong {
+  color: var(--ink);
+}
+
+.achievement-row.earned span,
+.achievement-row.earned .achievement-rewards {
+  color: var(--muted);
+}
+
+.achievement-row:not(.earned) .achievement-description,
+.achievement-row:not(.earned) .achievement-rewards {
+  filter: blur(3px);
+  opacity: 0.58;
+  user-select: none;
+}
+
+.achievement-row.quest-row:not(.earned) .achievement-description,
+.achievement-row.quest-row:not(.earned) .achievement-rewards {
+  filter: none;
+  opacity: 1;
+  user-select: auto;
+}
+
+@media (max-width: 420px) {
+  .achievement-detail-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .quest-row .achievement-detail-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .achievement-rewards {
+    justify-content: flex-start;
+  }
+
+  .quest-reward-stack {
+    justify-items: end;
+  }
+}
+
+.achievement-toast {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  width: min(320px, calc(100vw - 28px));
+  padding: 12px 14px;
+  border: 2px solid #e7b93f;
+  border-radius: 8px;
+  background: rgba(255, 250, 228, 0.98);
+  box-shadow: 0 12px 28px rgba(91, 88, 109, 0.22), 0 5px 0 rgba(189, 139, 42, 0.2);
+  color: var(--ink);
+  display: grid;
+  gap: 5px;
+  z-index: 40;
+  opacity: 0;
+  transform: translateY(-10px) scale(0.98);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.achievement-toast[hidden] {
+  display: none;
+}
+
+.achievement-toast.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.achievement-toast strong {
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.achievement-toast > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.achievement-toast-rewards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.achievement-toast-rewards span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #fffefa;
+  color: #7a5b25;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.achievement-toast.payout .achievement-toast-rewards span {
+  animation: reward-pop 620ms ease;
 }
 
 .profile-field input,
@@ -1545,6 +1807,12 @@ button.save-action {
   background: #fff;
   box-shadow: 0 4px 0 rgba(66, 59, 53, 0.12);
   font-weight: 900;
+}
+
+.game-menu-dropdown button.danger-action {
+  background: #d93645;
+  box-shadow: 0 4px 0 rgba(122, 38, 48, 0.28);
+  color: #fffefa;
 }
 
 .eyebrow {
@@ -2272,10 +2540,18 @@ dialog form {
 
 .coin-pile::before,
 .coin-pile::after {
-  content: "🪙";
+  content: "";
   position: absolute;
-  font-size: 1.25rem;
-  filter: drop-shadow(0 3px 0 rgba(91, 88, 109, 0.12));
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(137, 91, 30, 0.28);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.72) 0 13%, transparent 14%),
+    radial-gradient(circle at 50% 50%, #ffe99a 0 44%, #ffd45e 45% 68%, #d99b31 69% 100%);
+  box-shadow: inset 0 -3px 0 rgba(137, 91, 30, 0.16), 0 3px 0 rgba(91, 88, 109, 0.12);
+  font-size: 0;
+  filter: none;
 }
 
 .coin-pile::before {
@@ -2748,6 +3024,10 @@ dialog ul {
 
   .notification-corner {
     top: 52px;
+  }
+
+  .quest-corner {
+    top: 106px;
   }
 
   .cafe-window {

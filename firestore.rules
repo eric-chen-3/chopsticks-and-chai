@@ -24,17 +24,24 @@ service cloud.firestore {
         || (data[field] is list && data[field].size() <= maxLength);
     }
 
+    function optionalMap(data, field) {
+      return !(field in data) || data[field] is map;
+    }
+
     function validUserProfile() {
       return request.resource.data.keys().hasOnly([
           "createdAt", "updatedAt", "email", "username", "tag", "selectedCharacterId",
-          "ownedCharacterIds", "economy", "verified", "presence"
+          "ownedCharacterIds", "economy", "achievements", "achievementStats", "questState", "verified", "presence"
         ])
         && optionalString(request.resource.data, "email", 120)
         && optionalString(request.resource.data, "username", 18)
         && optionalString(request.resource.data, "tag", 4)
         && optionalString(request.resource.data, "selectedCharacterId", 40)
         && optionalBool(request.resource.data, "verified")
-        && optionalList(request.resource.data, "ownedCharacterIds", 40);
+        && optionalList(request.resource.data, "ownedCharacterIds", 40)
+        && optionalList(request.resource.data, "achievements", 40)
+        && optionalMap(request.resource.data, "achievementStats")
+        && optionalMap(request.resource.data, "questState");
     }
 
     function validFriend() {

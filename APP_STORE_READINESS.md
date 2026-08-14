@@ -36,7 +36,7 @@ Windows can install Capacitor packages and generate/sync the iOS project. Buildi
 ## Firebase Migration Status
 
 - Email/password account creation and sign-in are backed by Firebase Authentication.
-- User profiles, public profile lookup, presence, friends, notifications, saves, lobbies, active game state, lobby messages, economy/profile updates, and account deletion cleanup are backed by Firebase for signed-in users.
+- User profiles, public profile lookup, presence, friends, notifications, lobbies, active game state, lobby messages, economy/profile updates, and account deletion cleanup are backed by Firebase for signed-in users.
 - Settings includes draft Privacy, Terms, Support, and account deletion information surfaces.
 - Local storage paths remain as a fallback for unsigned/local development sessions.
 - Mock test controls are hidden in production builds, including when the app is opened with `?devtools=1`.

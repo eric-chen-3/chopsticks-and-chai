@@ -61,19 +61,19 @@ Create or update the app with:
 Beta App Description:
 
 ```text
-Chopsticks & Chai is a cozy digital version of the chopsticks hand game with cafe-themed characters, power-up variants, friends, lobbies, saves, and online test accounts.
+Chopsticks & Chai is a cozy digital version of the chopsticks hand game with cafe-themed characters, power-up variants, friends, lobbies, automatic progress, and online test accounts.
 ```
 
 What to Test:
 
 ```text
-Please test account creation/sign-in, profile setup, friend requests, separate-device lobbies, lobby chat, match flow, saves, character unlocks, account deletion, and general UI fit on your device.
+Please test account creation/sign-in, profile setup, friend requests, separate-device lobbies, lobby chat, match flow, character unlocks, account deletion, and general UI fit on your device.
 ```
 
 Beta App Review Notes:
 
 ```text
-This beta uses Firebase Authentication with email/password sign-in and Firestore for profile, friends, saves, notifications, lobbies, lobby chat, and game state. Create a new test account in-app or use a reviewer test account if provided in App Store Connect. No purchases are enabled.
+This beta uses Firebase Authentication with email/password sign-in and Firestore for profile, friends, notifications, lobbies, lobby chat, automatic progress, and game state. Create a new test account in-app or use a reviewer test account if provided in App Store Connect. No purchases are enabled.
 ```
 
 Feedback Email:
@@ -92,13 +92,13 @@ Likely data collected and linked to user identity:
 
 - Email Address: Firebase Authentication account sign-in.
 - User ID: Firebase Auth UID and Firestore document ownership.
-- User Content: profile username/tag, friends, notifications, saves, lobby messages, lobby/game state.
+- User Content: profile username/tag, friends, notifications, lobby messages, lobby/game state.
 - Product Interaction: Firebase Analytics may collect app interaction data if analytics remains enabled.
 - Diagnostics: Firebase/App Store/TestFlight crash or diagnostic data may be available through platform tooling.
 
 Likely purpose:
 
-- App Functionality for account, friends, lobbies, saves, chat, and gameplay state.
+- App Functionality for account, friends, lobbies, chat, progress, and gameplay state.
 - Analytics only if Firebase Analytics remains enabled and used.
 
 Tracking:

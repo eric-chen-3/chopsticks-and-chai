@@ -135,7 +135,7 @@ export async function upsertUserProfile(uid, profile) {
         updatedAt: serverTimestamp(),
       }, { merge: true });
     }
-    transaction.set(doc(db, "users", uid), privateProfile, { merge: true });
+    transaction.set(doc(db, "users", uid), privateProfile);
   });
 }
 
@@ -180,7 +180,7 @@ export async function updateUserProfileTransaction(uid, updater) {
     transaction.set(userRef, {
       ...sanitizeForFirestore(next),
       updatedAt: serverTimestamp(),
-    }, { merge: true });
+    });
     if (publicRef) {
       transaction.set(publicRef, {
         uid,

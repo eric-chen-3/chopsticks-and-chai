@@ -52,6 +52,44 @@ const WIN_COINS = 25;
 const FORFEIT_SECONDS = 30;
 const AUTH_TIMEOUT_MS = 15000;
 
+const achievements = [
+  { id: "inviteSent", title: "Invite Sent", description: "Send your first game invite.", difficulty: "Easy", exp: 25, coins: 25 },
+  { id: "fashionFan", title: "Fashion Fan", description: "Change your avatar.", difficulty: "Easy", exp: 25, coins: 25 },
+  { id: "firstWin", title: "First Win", description: "Win your first match.", difficulty: "Easy", exp: 40, coins: 40 },
+  { id: "socialStarter", title: "Social Starter", description: "Add your first friend.", difficulty: "Easy", exp: 40, coins: 40 },
+  { id: "friendlyRival", title: "Friendly Rival", description: "Play a separate devices match.", difficulty: "Easy", exp: 50, coins: 50 },
+  { id: "cleanVictory", title: "Clean Victory", description: "Win without losing a hand.", difficulty: "Medium", exp: 80, coins: 75 },
+  { id: "closeCall", title: "Close Call", description: "Win with only one live hand remaining.", difficulty: "Medium", exp: 80, coins: 75 },
+  { id: "hotStreak", title: "Hot Streak", description: "Win 3 games in a row.", difficulty: "Medium", exp: 100, coins: 90 },
+  { id: "powerPlayer", title: "Power Player", description: "Win a Power Up Mode game.", difficulty: "Medium", exp: 100, coins: 90 },
+  { id: "noQuitter", title: "No Quitter", description: "Return to a match before forfeiting.", difficulty: "Medium", exp: 100, coins: 90 },
+  { id: "goodSport", title: "Good Sport", description: "Finish 10 matches.", difficulty: "Medium", exp: 125, coins: 110 },
+  { id: "risingStar", title: "Rising Star", description: "Reach level 5.", difficulty: "Medium", exp: 150, coins: 125 },
+  { id: "coinCollector", title: "Coin Collector", description: "Earn 500 coins total.", difficulty: "Medium", exp: 150, coins: 140 },
+  { id: "bigSpender", title: "Big Spender", description: "Spend 250 coins in the store.", difficulty: "Medium", exp: 150, coins: 140 },
+  { id: "classicMaster", title: "Classic Master", description: "Win 10 Standard Mode games.", difficulty: "Hard", exp: 225, coins: 175 },
+  { id: "unstoppable", title: "Unstoppable", description: "Win 5 games in a row.", difficulty: "Hard", exp: 250, coins: 200 },
+  { id: "veteran", title: "Veteran", description: "Reach level 10.", difficulty: "Hard", exp: 275, coins: 225 },
+  { id: "expertsOnly", title: "Experts Only", description: "Reach level 15.", difficulty: "Very Hard", exp: 375, coins: 300 },
+  { id: "tooDamnGood", title: "Too Damn Good", description: "Win 10 games in a row.", difficulty: "Very Hard", exp: 425, coins: 350 },
+  { id: "masterOfTheGame", title: "Master of the Game", description: "Reach level 20.", difficulty: "Very Hard", exp: 500, coins: 400 },
+];
+
+const dailyQuests = [
+  { id: "cafeCheckIn", title: "Cafe Check-In", goal: "Open the game today", metric: "checkIns", target: 1, exp: 5, coins: 5 },
+  { id: "warmUpMatch", title: "Warm Up Match", goal: "Play 1 match", metric: "matchesPlayed", target: 1, exp: 15, coins: 10 },
+  { id: "friendlyHello", title: "Friendly Hello", goal: "Send 1 game invite", metric: "invitesSent", target: 1, exp: 15, coins: 10 },
+  { id: "quickWin", title: "Quick Win", goal: "Win 1 match", metric: "wins", target: 1, exp: 25, coins: 20 },
+  { id: "hatTrick", title: "Hat Trick", goal: "Win 3 games", metric: "wins", target: 3, exp: 40, coins: 30 },
+];
+
+const weeklyQuests = [
+  { id: "steadyPlayer", title: "Steady Player", goal: "Play 10 matches", metric: "matchesPlayed", target: 10, exp: 150, coins: 100 },
+  { id: "winningWeek", title: "Winning Week", goal: "Win 5 matches", metric: "wins", target: 5, exp: 150, coins: 100 },
+  { id: "socialRegular", title: "Social Regular", goal: "Send 10 game invites", metric: "invitesSent", target: 10, exp: 100, coins: 50 },
+  { id: "coinWeek", title: "Coin Week", goal: "Earn 500 coins", metric: "coinsEarned", target: 500, exp: 150, coins: 100 },
+];
+
 let game;
 let previousScreen = "mainMenuScreen";
 let pendingSaveName = "";
@@ -85,6 +123,8 @@ let presenceHeartbeatId = null;
 let gameStateSyncTimer = null;
 let lobbyChatUnsubscribe = null;
 let lobbyChatSubscriptionId = "";
+let dailyCheckInPromise = null;
+let dailyCheckInUsername = "";
 let firebaseLobbyMessages = {};
 let authFlowMode = "landing";
 let pendingCreateAccount = null;
@@ -345,12 +385,13 @@ function maxLiveChopsticks() {
 }
 
 function showScreen(screenId) {
-  ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "gameScreen"].forEach((id) => {
+  ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "gameScreen"].forEach((id) => {
     document.querySelector(`#${id}`).hidden = id !== screenId;
   });
   document.querySelector("#gameMenuDropdown").hidden = true;
   renderGlobalMockSwitcher();
   renderNotificationBadge();
+  renderQuestBadge();
   if (screenId === "mainMenuScreen") {
     renderSelectedCharacter();
     renderActiveLobbyPrompts();
@@ -358,6 +399,8 @@ function showScreen(screenId) {
   if (screenId === "profileScreen") renderProfile();
   if (screenId === "friendsScreen") renderFriends();
   if (screenId === "notificationsScreen") renderNotifications();
+  if (screenId === "achievementsScreen") renderAchievements();
+  if (screenId === "questsScreen") renderQuests();
   if (screenId === "waitingLobbyScreen") renderWaitingLobby();
   if (screenId === "storeScreen") {
     pendingCharacterId = getSelectedCharacter().id;
@@ -1219,23 +1262,23 @@ function requestReturnToMenu() {
     return;
   }
   if (game.submode !== "Pass and Play") {
-    document.querySelector("#saveNameFields").hidden = true;
-    document.querySelector("#leaveWithoutSave").hidden = false;
-    document.querySelector("#leaveWithoutSave").textContent = "Leave Game";
-    document.querySelector("#saveAndLeave").hidden = true;
     document.querySelector("#savePromptDialog p").textContent = "Returning to the menu will start a 30 second return timer. If it reaches 0 while it is your turn, it counts as a forfeit loss.";
     document.querySelector("#savePromptDialog").showModal();
     return;
   }
-  const saves = getSaves();
-  const existingSave = getCurrentSave(saves);
   document.querySelector("#saveNameFields").hidden = true;
-  document.querySelector("#leaveWithoutSave").hidden = false;
-  document.querySelector("#leaveWithoutSave").textContent = "Leave Without Saving";
-  document.querySelector("#saveAndLeave").hidden = false;
-  document.querySelector("#savePromptDialog p").textContent = "Leave this match or save it for later?";
-  document.querySelector("#saveNameInput").value = existingSave ? existingSave.name : defaultSaveName(saves.length);
+  document.querySelector("#savePromptDialog p").textContent = "Leave this match and return to the main menu?";
   document.querySelector("#savePromptDialog").showModal();
+}
+
+function confirmReturnToMenu() {
+  if (game && game.submode === "Separate Devices" && !game.over) {
+    markGamePlayerLeft(getActiveUsername());
+  } else {
+    closeGameLobbyForActivePlayer();
+    game = null;
+  }
+  showScreen("mainMenuScreen");
 }
 
 function saveAndReturn() {
@@ -1284,7 +1327,6 @@ function showSaveNameStep() {
   if (!game || game.submode !== "Pass and Play") return;
   const dialog = document.querySelector("#savePromptDialog");
   document.querySelector("#saveNameFields").hidden = false;
-  document.querySelector("#leaveWithoutSave").hidden = true;
   if (!dialog.open) dialog.showModal();
   document.querySelector("#saveNameInput").focus();
 }
@@ -1445,7 +1487,7 @@ function removeStorageKey(key) {
 }
 
 function coinIconMarkup() {
-  return '<span class="coin-icon" aria-label="coin">🪙</span>';
+  return '<i class="coin-icon" aria-label="coin"></i>';
 }
 
 function coinAmountMarkup(amount) {
@@ -1478,6 +1520,53 @@ function defaultEconomy(overrides = {}) {
   };
 }
 
+function defaultAchievementStats(overrides = {}) {
+  return {
+    totalCoinsEarned: 0,
+    totalCoinsSpent: 0,
+    matchesFinished: 0,
+    separateDeviceMatches: 0,
+    standardWins: 0,
+    powerWins: 0,
+    avatarChanges: 0,
+    invitesSent: 0,
+    friendsAdded: 0,
+    noQuitterReturns: 0,
+    ...overrides,
+  };
+}
+
+function questPeriodKey(kind, date = new Date()) {
+  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (kind === "daily") return local.toISOString().slice(0, 10);
+  const day = (local.getDay() + 6) % 7;
+  local.setDate(local.getDate() - day);
+  return local.toISOString().slice(0, 10);
+}
+
+function defaultQuestProgress(overrides = {}) {
+  return {
+    checkIns: 0,
+    matchesPlayed: 0,
+    wins: 0,
+    invitesSent: 0,
+    coinsEarned: 0,
+    ...overrides,
+  };
+}
+
+function defaultQuestState(overrides = {}) {
+  return {
+    dailyPeriod: questPeriodKey("daily"),
+    weeklyPeriod: questPeriodKey("weekly"),
+    daily: defaultQuestProgress(),
+    weekly: defaultQuestProgress(),
+    dailyClaimed: [],
+    weeklyClaimed: [],
+    ...overrides,
+  };
+}
+
 function normalizeEconomy(profile = {}) {
   return defaultEconomy({
     level: Number.isFinite(profile.level) ? Math.max(1, Math.floor(profile.level)) : 1,
@@ -1489,8 +1578,66 @@ function normalizeEconomy(profile = {}) {
   });
 }
 
+function normalizeAchievementStats(profile = {}) {
+  const stats = profile.achievementStats || {};
+  return defaultAchievementStats({
+    totalCoinsEarned: Number.isFinite(stats.totalCoinsEarned) ? Math.max(0, Math.floor(stats.totalCoinsEarned)) : 0,
+    totalCoinsSpent: Number.isFinite(stats.totalCoinsSpent) ? Math.max(0, Math.floor(stats.totalCoinsSpent)) : 0,
+    matchesFinished: Number.isFinite(stats.matchesFinished) ? Math.max(0, Math.floor(stats.matchesFinished)) : 0,
+    separateDeviceMatches: Number.isFinite(stats.separateDeviceMatches) ? Math.max(0, Math.floor(stats.separateDeviceMatches)) : 0,
+    standardWins: Number.isFinite(stats.standardWins) ? Math.max(0, Math.floor(stats.standardWins)) : 0,
+    powerWins: Number.isFinite(stats.powerWins) ? Math.max(0, Math.floor(stats.powerWins)) : 0,
+    avatarChanges: Number.isFinite(stats.avatarChanges) ? Math.max(0, Math.floor(stats.avatarChanges)) : 0,
+    invitesSent: Number.isFinite(stats.invitesSent) ? Math.max(0, Math.floor(stats.invitesSent)) : 0,
+    friendsAdded: Number.isFinite(stats.friendsAdded) ? Math.max(0, Math.floor(stats.friendsAdded)) : 0,
+    noQuitterReturns: Number.isFinite(stats.noQuitterReturns) ? Math.max(0, Math.floor(stats.noQuitterReturns)) : 0,
+  });
+}
+
+function normalizeAchievements(profile = {}) {
+  return Array.isArray(profile.achievements)
+    ? profile.achievements.filter((id, index, list) => typeof id === "string" && list.indexOf(id) === index)
+    : [];
+}
+
+function normalizeQuestProgress(progress = {}) {
+  return defaultQuestProgress({
+    checkIns: Number.isFinite(progress.checkIns) ? Math.max(0, Math.floor(progress.checkIns)) : 0,
+    matchesPlayed: Number.isFinite(progress.matchesPlayed) ? Math.max(0, Math.floor(progress.matchesPlayed)) : 0,
+    wins: Number.isFinite(progress.wins) ? Math.max(0, Math.floor(progress.wins)) : 0,
+    invitesSent: Number.isFinite(progress.invitesSent) ? Math.max(0, Math.floor(progress.invitesSent)) : 0,
+    coinsEarned: Number.isFinite(progress.coinsEarned) ? Math.max(0, Math.floor(progress.coinsEarned)) : 0,
+  });
+}
+
+function normalizeClaimedQuestIds(value) {
+  return Array.isArray(value)
+    ? value.filter((id, index, list) => typeof id === "string" && list.indexOf(id) === index)
+    : [];
+}
+
+function normalizeQuestState(profile = {}) {
+  const state = profile.questState || {};
+  const dailyPeriod = questPeriodKey("daily");
+  const weeklyPeriod = questPeriodKey("weekly");
+  return defaultQuestState({
+    dailyPeriod,
+    weeklyPeriod,
+    daily: state.dailyPeriod === dailyPeriod ? normalizeQuestProgress(state.daily) : defaultQuestProgress(),
+    weekly: state.weeklyPeriod === weeklyPeriod ? normalizeQuestProgress(state.weekly) : defaultQuestProgress(),
+    dailyClaimed: state.dailyPeriod === dailyPeriod ? normalizeClaimedQuestIds(state.dailyClaimed) : [],
+    weeklyClaimed: state.weeklyPeriod === weeklyPeriod ? normalizeClaimedQuestIds(state.weeklyClaimed) : [],
+  });
+}
+
 function profileWithEconomy(profile, overrides = {}) {
-  return { ...profile, ...defaultEconomy(normalizeEconomy(profile)), ...overrides };
+  const merged = { ...profile, ...defaultEconomy(normalizeEconomy(profile)), ...overrides };
+  return {
+    ...merged,
+    achievements: normalizeAchievements(merged),
+    achievementStats: normalizeAchievementStats(merged),
+    questState: normalizeQuestState(merged),
+  };
 }
 
 function addExperience(profile, amount) {
@@ -1509,6 +1656,10 @@ function streakBonusRate(streak) {
 }
 
 function applyRewardToProfile(username, didWin) {
+  return applyMatchRewardToProfile(username, didWin, currentMatchAchievementEvent(username, didWin));
+}
+
+function applyMatchRewardToProfile(username, didWin, event = {}) {
   if (!username) return null;
   const existing = getProfile(username) || {
     username,
@@ -1527,20 +1678,38 @@ function applyRewardToProfile(username, didWin) {
   const bonusRate = didWin ? streakBonusRate(nextStreak) : 0;
   const xp = Math.round((didWin ? WIN_XP : LOSS_XP) * (1 + bonusRate));
   const coins = didWin ? Math.round(WIN_COINS * (1 + bonusRate)) : 0;
-  const updated = addExperience({
+  const updatedBeforeAchievements = addExperience({
     ...current,
     coins: current.coins + coins,
     winStreak: nextStreak,
     totalWins: current.totalWins + (didWin ? 1 : 0),
     totalLosses: current.totalLosses + (didWin ? 0 : 1),
+    achievementStats: addAchievementStats(current.achievementStats, {
+      matchesFinished: 1,
+      separateDeviceMatches: event.separateDeviceMatch ? 1 : 0,
+      standardWins: didWin && event.mode === "Standard Mode" ? 1 : 0,
+      powerWins: didWin && event.mode === "Power Up Mode" ? 1 : 0,
+      totalCoinsEarned: coins,
+    }),
   }, xp);
+  const achievementResult = awardEligibleAchievements(updatedBeforeAchievements, event);
+  const achievementCoins = achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0);
+  const updated = applyQuestProgressToProfile(achievementResult.profile, {
+    matchesPlayed: 1,
+    wins: didWin ? 1 : 0,
+    coinsEarned: coins + achievementCoins,
+  });
   setProfile(updated, username);
   upsertMockUserFromProfile(updated);
+  if (username === getActiveUsername()) showAchievementUnlockToast(achievementResult.unlocked);
   return {
     username,
     didWin,
-    xp,
-    coins,
+    xp: xp + achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.exp, 0),
+    coins: coins + achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0),
+    baseXp: xp,
+    baseCoins: coins,
+    unlockedAchievements: achievementResult.unlocked,
     winStreak: updated.winStreak,
     level: updated.level,
     before,
@@ -1554,7 +1723,8 @@ function applyRewardToProfile(username, didWin) {
 }
 
 async function applyRewardToFirebaseProfile(username, didWin) {
-  if (!firebaseUser || username !== getActiveUsername()) return applyRewardToProfile(username, didWin);
+  const event = currentMatchAchievementEvent(username, didWin);
+  if (!firebaseUser || username !== getActiveUsername()) return applyMatchRewardToProfile(username, didWin, event);
   const result = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
     const current = profileWithEconomy(localProfileFromFirebaseData(remoteProfile, {
       fallbackUsername: username,
@@ -1570,22 +1740,40 @@ async function applyRewardToFirebaseProfile(username, didWin) {
     const bonusRate = didWin ? streakBonusRate(nextStreak) : 0;
     const xp = Math.round((didWin ? WIN_XP : LOSS_XP) * (1 + bonusRate));
     const coins = didWin ? Math.round(WIN_COINS * (1 + bonusRate)) : 0;
-    const updated = addExperience({
+    const updatedBeforeAchievements = addExperience({
       ...current,
       coins: current.coins + coins,
       winStreak: nextStreak,
       totalWins: current.totalWins + (didWin ? 1 : 0),
       totalLosses: current.totalLosses + (didWin ? 0 : 1),
+      achievementStats: addAchievementStats(current.achievementStats, {
+        matchesFinished: 1,
+        separateDeviceMatches: event.separateDeviceMatch ? 1 : 0,
+        standardWins: didWin && event.mode === "Standard Mode" ? 1 : 0,
+        powerWins: didWin && event.mode === "Power Up Mode" ? 1 : 0,
+        totalCoinsEarned: coins,
+      }),
     }, xp);
+  const achievementResult = awardEligibleAchievements(updatedBeforeAchievements, event);
+    const achievementCoins = achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0);
+    const updated = applyQuestProgressToProfile(achievementResult.profile, {
+      matchesPlayed: 1,
+      wins: didWin ? 1 : 0,
+      coinsEarned: coins + achievementCoins,
+    });
     return {
       write: firebaseDocumentFromLocalProfile(updated),
       result: {
         username,
         didWin,
-        xp,
-        coins,
+        xp: xp + achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.exp, 0),
+        coins: coins + achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0),
+        baseXp: xp,
+        baseCoins: coins,
+        unlockedAchievements: achievementResult.unlocked,
         winStreak: updated.winStreak,
         level: updated.level,
+        profile: updated,
         before,
         after: {
           level: updated.level,
@@ -1596,16 +1784,23 @@ async function applyRewardToFirebaseProfile(username, didWin) {
       },
     };
   });
-  firebaseProfile = profileWithEconomy(getProfile(username) || { username }, {
-    level: result.after.level,
-    experience: result.after.experience,
-    coins: result.after.coins,
-    winStreak: result.winStreak,
-    totalWins: normalizeEconomy(getProfile(username) || {}).totalWins + (result.didWin ? 1 : 0),
-    totalLosses: normalizeEconomy(getProfile(username) || {}).totalLosses + (result.didWin ? 0 : 1),
-  });
+  firebaseProfile = result.profile;
   writeAccountJson(PROFILE_KEY, firebaseProfile, username);
+  if (username === getActiveUsername()) showAchievementUnlockToast(result.unlockedAchievements);
   return result;
+}
+
+function currentMatchAchievementEvent(username, didWin) {
+  if (!game) return {};
+  const player = game.players.find((candidate) => candidate.name === username);
+  const liveHands = player ? player.hands.filter((value) => value > 0).length : 0;
+  return {
+    mode: game.mode,
+    submode: game.submode,
+    separateDeviceMatch: game.submode === "Separate Devices",
+    cleanVictory: didWin && liveHands === 2,
+    closeCall: didWin && liveHands === 1,
+  };
 }
 
 function awardMatchRewards(winnerIndex, loserIndex) {
@@ -1653,7 +1848,10 @@ function renderRewardPanel(reward) {
   document.querySelector("#rewardXpLabel").textContent = `+${reward.xp} XP`;
   document.querySelector("#rewardLevelLabel").textContent = `Level ${reward.before.level}`;
   document.querySelector("#rewardXpFill").style.width = `${xpPercent(reward.before.experience, reward.before.level)}%`;
-  document.querySelector("#rewardXpText").textContent = `${reward.before.experience} / ${levelRequirement(reward.before.level)} XP`;
+  const unlockedText = Array.isArray(reward.unlockedAchievements) && reward.unlockedAchievements.length
+    ? ` Achievements: ${reward.unlockedAchievements.map((achievement) => achievement.title).join(", ")}.`
+    : "";
+  document.querySelector("#rewardXpText").textContent = `${reward.before.experience} / ${levelRequirement(reward.before.level)} XP${unlockedText}`;
   document.querySelector("#rewardCoinText").innerHTML = `Total: ${coinAmountMarkup(reward.before.coins)} (+${coinAmountMarkup(reward.coins)})`;
 }
 
@@ -1842,6 +2040,9 @@ function getStoredActiveUsername() {
 }
 
 function getProfile(username = getStoredActiveUsername()) {
+  if (firebaseUser && firebaseProfile && username === getStoredActiveUsername()) {
+    return ensureProfileTag(firebaseProfile, username);
+  }
   const scoped = readAccountJson(PROFILE_KEY, null, username);
   if (scoped) return ensureProfileTag(scoped, username);
   const legacy = readJson(PROFILE_KEY, null);
@@ -1979,6 +2180,7 @@ function setActiveUsername(username) {
     showScreen("profileScreen");
     return;
   }
+  ensureDailyCheckInQuest();
   if (!document.querySelector("#waitingLobbyScreen").hidden) renderWaitingLobby();
   if (game && game.submode === "Separate Devices") clearForfeitAbsence(username);
   if (game) render();
@@ -1994,6 +2196,7 @@ function localProfileFromFirebase(user, remoteProfile) {
 
 function localProfileFromFirebaseData(remoteProfile, options = {}) {
   const economy = remoteProfile.economy || {};
+  const achievementStats = remoteProfile.achievementStats || {};
   return profileWithEconomy({
     username: remoteProfile.username || options.fallbackUsername || "player",
     email: remoteProfile.email || options.fallbackEmail || "",
@@ -2010,11 +2213,16 @@ function localProfileFromFirebaseData(remoteProfile, options = {}) {
     winStreak: economy.winStreak,
     totalWins: economy.totalWins,
     totalLosses: economy.totalLosses,
+    achievements: Array.isArray(remoteProfile.achievements) ? remoteProfile.achievements : [],
+    achievementStats,
+    questState: remoteProfile.questState || {},
   });
 }
 
 function firebaseDocumentFromLocalProfile(profile) {
   const economy = normalizeEconomy(profile || {});
+  const achievementStats = normalizeAchievementStats(profile || {});
+  const questState = normalizeQuestState(profile || {});
   return {
     username: profile.username,
     tag: normalizeTag(profile.tag || generateTag()),
@@ -2022,6 +2230,9 @@ function firebaseDocumentFromLocalProfile(profile) {
     selectedCharacterId: profile.selectedCharacterId || readAccountJson(CHARACTER_KEY, "honeyBear", profile.username),
     ownedCharacterIds: profile.ownedCharacterIds || ["honeyBear"],
     economy,
+    achievements: normalizeAchievements(profile || {}),
+    achievementStats,
+    questState,
     verified: true,
   };
 }
@@ -2037,12 +2248,24 @@ async function loadFirebaseProfile(user) {
   }
   firebaseProfile = profile;
   firebaseUsernameUidMap[profile.username] = user.uid;
-  setProfile(profile, profile.username);
+  writeAccountJson(PROFILE_KEY, profile, profile.username);
   setActiveUsername(profile.username);
+  await ensureDailyCheckInQuest();
   startFirebaseDataListeners(user.uid);
   startPresenceHeartbeat();
   showScreen("mainMenuScreen");
   return profile;
+}
+
+async function signOutToLanding() {
+  resetSignedOutAuthView();
+  previousScreen = "mainMenuScreen";
+  if (firebaseUser) {
+    await signOutCurrentUser();
+  } else {
+    firebaseProfile = null;
+    showScreen("profileScreen");
+  }
 }
 
 async function refreshFirebaseSocialData() {
@@ -2134,7 +2357,7 @@ function clearFirebaseRuntimeData() {
 }
 
 function activeScreenId() {
-  return ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "gameScreen"]
+  return ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "gameScreen"]
     .find((id) => !document.querySelector(`#${id}`).hidden) || "unknown";
 }
 
@@ -2423,6 +2646,8 @@ function markMissingCurrentTurnPlayerAbsent() {
 
 function clearForfeitAbsence(username) {
   if (!game || game.submode !== "Separate Devices" || !game.lobbyId || !username) return;
+  const lobbyBefore = activeGameLobby();
+  const returnedBeforeForfeit = Boolean(lobbyBefore && lobbyBefore.absentPlayers && lobbyBefore.absentPlayers[username]);
   updateLobby(game.lobbyId, (lobby) => {
     const absentPlayers = { ...(lobby.absentPlayers || {}) };
     delete absentPlayers[username];
@@ -2432,6 +2657,9 @@ function clearForfeitAbsence(username) {
       absentPlayers,
     };
   });
+  if (returnedBeforeForfeit && username === getActiveUsername()) {
+    applyAchievementEventToActiveProfile({ stats: { noQuitterReturns: 1 } }).catch((error) => console.warn("Unable to award return achievement", error));
+  }
   updateForfeitTimer();
 }
 
@@ -2686,12 +2914,501 @@ function profileProgress(username) {
 }
 
 function achievementItems(username) {
-  const base = username || "Player";
-  return [
-    `${base} joined Cozy Chopsticks Cafe`,
-    "First win achievement coming soon",
-    "Power Up collector achievement coming soon",
+  const profile = getProfile(username);
+  const earned = new Set(normalizeAchievements(profile || {}));
+  return achievements.map((achievement) => ({
+    ...achievement,
+    earned: earned.has(achievement.id),
+  }));
+}
+
+function addAchievementStats(stats, additions = {}) {
+  const next = normalizeAchievementStats({ achievementStats: stats });
+  Object.entries(additions).forEach(([key, value]) => {
+    if (Number.isFinite(value)) next[key] = Math.max(0, (next[key] || 0) + Math.floor(value));
+  });
+  return next;
+}
+
+function addQuestProgress(progress, additions = {}) {
+  const next = normalizeQuestProgress(progress);
+  Object.entries(additions).forEach(([key, value]) => {
+    if (Number.isFinite(value)) next[key] = Math.max(0, (next[key] || 0) + Math.floor(value));
+  });
+  return next;
+}
+
+function applyQuestProgressToProfile(profile, additions = {}) {
+  const current = profileWithEconomy(profile);
+  const questState = normalizeQuestState(current);
+  return profileWithEconomy(current, {
+    questState: {
+      ...questState,
+      daily: addQuestProgress(questState.daily, additions),
+      weekly: addQuestProgress(questState.weekly, additions),
+    },
+  });
+}
+
+function questProgressFor(profile, type, quest) {
+  const questState = normalizeQuestState(profile || {});
+  const progress = type === "weekly" ? questState.weekly : questState.daily;
+  return Math.min(quest.target, progress[quest.metric] || 0);
+}
+
+function questReady(profile, type, quest) {
+  return questProgressFor(profile, type, quest) >= quest.target && !questClaimed(profile, type, quest.id);
+}
+
+function questClaimed(profile, type, questId) {
+  const questState = normalizeQuestState(profile || {});
+  const claimed = type === "weekly" ? questState.weeklyClaimed : questState.dailyClaimed;
+  return claimed.includes(questId);
+}
+
+function hasReadyQuests(profile = getProfile()) {
+  if (!profile) return false;
+  return dailyQuests.some((quest) => questReady(profile, "daily", quest))
+    || weeklyQuests.some((quest) => questReady(profile, "weekly", quest));
+}
+
+function applyQuestProgressToLocalProfile(username, additions = {}) {
+  const profile = getProfile(username);
+  if (!profile) return null;
+  const updated = applyQuestProgressToProfile(profile, additions);
+  setProfile(updated, username);
+  if (username === getActiveUsername()) renderQuestBadge();
+  return updated;
+}
+
+async function applyQuestProgressToActiveProfile(additions = {}) {
+  const username = getActiveUsername();
+  if (!username) return null;
+  if (!firebaseUser || !firebaseProfile) return applyQuestProgressToLocalProfile(username, additions);
+  const result = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    const updated = applyQuestProgressToProfile(local, additions);
+    return {
+      write: firebaseDocumentFromLocalProfile(updated),
+      result: updated,
+    };
+  });
+  firebaseProfile = result;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  renderQuestBadge();
+  return result;
+}
+
+async function ensureDailyCheckInQuest() {
+  const username = getActiveUsername();
+  if (dailyCheckInPromise && dailyCheckInUsername === username) return dailyCheckInPromise;
+  const profile = getProfile();
+  if (!profile) return;
+  const state = normalizeQuestState(profile);
+  if (state.daily.checkIns > 0) {
+    renderQuestBadge();
+    return;
+  }
+  dailyCheckInUsername = username;
+  dailyCheckInPromise = applyQuestProgressToActiveProfile({ checkIns: 1 })
+    .catch((error) => console.warn("Unable to record quest check-in", error))
+    .finally(() => {
+      dailyCheckInPromise = null;
+      dailyCheckInUsername = "";
+    });
+  await dailyCheckInPromise;
+}
+
+function questById(type, questId) {
+  return (type === "weekly" ? weeklyQuests : dailyQuests).find((quest) => quest.id === questId) || null;
+}
+
+async function claimQuestReward(type, questId) {
+  const quest = questById(type, questId);
+  const username = getActiveUsername();
+  if (!quest || !username) return;
+  if (!firebaseUser || !firebaseProfile) {
+    const profile = getProfile(username);
+    if (!questReady(profile, type, quest)) return;
+    const state = normalizeQuestState(profile);
+    const claimedKey = type === "weekly" ? "weeklyClaimed" : "dailyClaimed";
+    const withReward = addExperience(profileWithEconomy(profile, {
+      coins: normalizeEconomy(profile).coins + quest.coins,
+      questState: {
+        ...state,
+        [claimedKey]: [...state[claimedKey], quest.id],
+      },
+    }), quest.exp);
+    const updated = applyQuestProgressToProfile(withReward, { coinsEarned: quest.coins });
+    setProfile(updated, username);
+    showQuestClaimToast(quest);
+    renderQuests();
+    renderProfile();
+    renderQuestBadge();
+    return;
+  }
+  const updated = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    if (!questReady(local, type, quest)) {
+      return {
+        write: firebaseDocumentFromLocalProfile(local),
+        result: local,
+      };
+    }
+    const state = normalizeQuestState(local);
+    const claimedKey = type === "weekly" ? "weeklyClaimed" : "dailyClaimed";
+    const withReward = addExperience(profileWithEconomy(local, {
+      coins: normalizeEconomy(local).coins + quest.coins,
+      questState: {
+        ...state,
+        [claimedKey]: [...state[claimedKey], quest.id],
+      },
+    }), quest.exp);
+    const next = applyQuestProgressToProfile(withReward, { coinsEarned: quest.coins });
+    return {
+      write: firebaseDocumentFromLocalProfile(next),
+      result: next,
+    };
+  });
+  firebaseProfile = updated;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  showQuestClaimToast(quest);
+  renderQuests();
+  renderProfile();
+  renderQuestBadge();
+}
+
+function achievementById(id) {
+  return achievements.find((achievement) => achievement.id === id) || null;
+}
+
+function achievementUnlocked(profile, achievement, event = {}) {
+  const stats = normalizeAchievementStats(profile);
+  const economy = normalizeEconomy(profile);
+  switch (achievement.id) {
+    case "inviteSent": return stats.invitesSent >= 1;
+    case "fashionFan": return stats.avatarChanges >= 1;
+    case "firstWin": return economy.totalWins >= 1;
+    case "socialStarter": return stats.friendsAdded >= 1;
+    case "friendlyRival": return stats.separateDeviceMatches >= 1;
+    case "cleanVictory": return Boolean(event.cleanVictory);
+    case "closeCall": return Boolean(event.closeCall);
+    case "hotStreak": return economy.winStreak >= 3;
+    case "powerPlayer": return stats.powerWins >= 1;
+    case "noQuitter": return stats.noQuitterReturns >= 1;
+    case "goodSport": return stats.matchesFinished >= 10;
+    case "risingStar": return economy.level >= 5;
+    case "coinCollector": return stats.totalCoinsEarned >= 500;
+    case "bigSpender": return stats.totalCoinsSpent >= 250;
+    case "classicMaster": return stats.standardWins >= 10;
+    case "unstoppable": return economy.winStreak >= 5;
+    case "veteran": return economy.level >= 10;
+    case "expertsOnly": return economy.level >= 15;
+    case "tooDamnGood": return economy.winStreak >= 10;
+    case "masterOfTheGame": return economy.level >= 20;
+    default: return false;
+  }
+}
+
+function awardEligibleAchievements(profile, event = {}) {
+  let next = profileWithEconomy(profile);
+  const unlocked = [];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const achievement of achievements) {
+      if (next.achievements.includes(achievement.id) || !achievementUnlocked(next, achievement, event)) continue;
+      next.achievements = [...next.achievements, achievement.id];
+      next.achievementStats = addAchievementStats(next.achievementStats, { totalCoinsEarned: achievement.coins });
+      next = addExperience({ ...next, coins: next.coins + achievement.coins }, achievement.exp);
+      unlocked.push(achievement);
+      changed = true;
+    }
+  }
+  return { profile: next, unlocked };
+}
+
+function applyAchievementEventToProfile(username, event = {}) {
+  if (!username) return null;
+  const profile = getProfile(username);
+  if (!profile) return null;
+  const next = profileWithEconomy(profile, {
+    achievementStats: addAchievementStats(normalizeAchievementStats(profile), event.stats || {}),
+  });
+  const result = awardEligibleAchievements(next, event);
+  const updated = event.questStats ? applyQuestProgressToProfile(result.profile, event.questStats) : result.profile;
+  setProfile(updated, username);
+  upsertMockUserFromProfile(updated);
+  if (username === getActiveUsername()) showAchievementUnlockToast(result.unlocked);
+  return { ...result, profile: updated };
+}
+
+async function applyAchievementEventToActiveProfile(event = {}) {
+  const username = getActiveUsername();
+  if (!username) return null;
+  if (!firebaseUser || !firebaseProfile) return applyAchievementEventToProfile(username, event);
+  const result = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    const withStats = profileWithEconomy(local, {
+      achievementStats: addAchievementStats(local.achievementStats, event.stats || {}),
+    });
+    const achievementResult = awardEligibleAchievements(withStats, event);
+    const updated = event.questStats ? applyQuestProgressToProfile(achievementResult.profile, event.questStats) : achievementResult.profile;
+    return {
+      write: firebaseDocumentFromLocalProfile(updated),
+      result: { ...achievementResult, profile: updated },
+    };
+  });
+  firebaseProfile = result.profile;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  showAchievementUnlockToast(result.unlocked);
+  return result;
+}
+
+function renderAchievements() {
+  const list = document.querySelector("#achievementList");
+  if (!list) return;
+  const username = getActiveUsername() || "Guest";
+  list.replaceChildren();
+  achievementItems(username).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = `achievement-row${item.earned ? " earned" : ""}`;
+    row.innerHTML = `
+      <div class="achievement-card-text">
+        <strong>${escapeHtml(item.title)}</strong>
+        <div class="achievement-detail-row">
+          <span class="achievement-description">${escapeHtml(item.description)}</span>
+          <small class="achievement-rewards"><span class="achievement-reward">+${item.exp} EXP</span><span class="achievement-reward">+${coinAmountMarkup(item.coins)}</span></small>
+        </div>
+      </div>
+    `;
+    list.append(row);
+  });
+}
+
+function renderQuestList(listId, type, quests) {
+  const list = document.querySelector(`#${listId}`);
+  if (!list) return;
+  const profile = getProfile();
+  list.replaceChildren();
+  quests.forEach((quest) => {
+    const progress = profile ? questProgressFor(profile, type, quest) : 0;
+    const ready = profile ? questReady(profile, type, quest) : false;
+    const claimed = profile ? questClaimed(profile, type, quest.id) : false;
+    const row = document.createElement("div");
+    row.className = `achievement-row quest-row${claimed ? " claimed" : ""}`;
+    row.innerHTML = `
+      <div class="achievement-card-text">
+        <strong>${escapeHtml(quest.title)}</strong>
+        <div class="achievement-detail-row">
+          <span class="achievement-description">${escapeHtml(quest.goal)} (${progress}/${quest.target})</span>
+          <div class="quest-reward-stack">
+            ${ready ? `
+              <button class="quest-claim-button" type="button" aria-label="Claim ${escapeHtml(quest.title)} reward" data-quest-type="${type}" data-quest-id="${quest.id}">
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M5 13l4 4L19 7"></path>
+                </svg>
+              </button>
+            ` : ""}
+            <small class="achievement-rewards"><span class="achievement-reward">+${quest.exp} EXP</span><span class="achievement-reward">+${coinAmountMarkup(quest.coins)}</span></small>
+          </div>
+        </div>
+      </div>
+    `;
+    const claimButton = row.querySelector(".quest-claim-button");
+    if (claimButton) {
+      claimButton.addEventListener("click", async () => {
+        await claimQuestReward(type, quest.id);
+        playMenuSound();
+      });
+    }
+    list.append(row);
+  });
+}
+
+function renderQuests() {
+  ensureDailyCheckInQuest().finally(() => {
+    renderQuestList("dailyQuestList", "daily", dailyQuests);
+    renderQuestList("weeklyQuestList", "weekly", weeklyQuests);
+    renderQuestBadge();
+  });
+  renderQuestList("dailyQuestList", "daily", dailyQuests);
+  renderQuestList("weeklyQuestList", "weekly", weeklyQuests);
+  renderQuestBadge();
+}
+
+function showAchievementUnlockToast(unlocked = []) {
+  const achievementsUnlocked = Array.isArray(unlocked) ? unlocked.filter(Boolean) : [];
+  if (!achievementsUnlocked.length) return;
+  const toast = document.querySelector("#achievementToast");
+  if (!toast) return;
+  const xpTotal = achievementsUnlocked.reduce((sum, achievement) => sum + achievement.exp, 0);
+  const coinTotal = achievementsUnlocked.reduce((sum, achievement) => sum + achievement.coins, 0);
+  document.querySelector("#achievementToastTitle").textContent = achievementsUnlocked.length === 1
+    ? "Achievement Unlocked"
+    : `${achievementsUnlocked.length} Achievements Unlocked`;
+  document.querySelector("#achievementToastNames").textContent = achievementsUnlocked.map((achievement) => achievement.title).join(", ");
+  const xpEl = document.querySelector("#achievementToastXp");
+  const coinEl = document.querySelector("#achievementToastCoins");
+  xpEl.textContent = "+0 EXP";
+  coinEl.innerHTML = `+${coinAmountMarkup(0)}`;
+  toast.hidden = false;
+  toast.classList.remove("show", "payout");
+  void toast.offsetWidth;
+  toast.classList.add("show", "payout");
+  playSound("levelUp");
+  const duration = 820;
+  const startedAt = performance.now();
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    xpEl.textContent = `+${Math.round(xpTotal * progress)} EXP`;
+    coinEl.innerHTML = `+${coinAmountMarkup(Math.round(coinTotal * progress))}`;
+    if (progress < 1) window.requestAnimationFrame(tick);
+  };
+  window.requestAnimationFrame(tick);
+  window.clearTimeout(showAchievementUnlockToast.hideTimer);
+  showAchievementUnlockToast.hideTimer = window.setTimeout(() => {
+    toast.classList.remove("show", "payout");
+    window.setTimeout(() => {
+      toast.hidden = true;
+    }, 220);
+  }, 4200);
+}
+
+function showQuestClaimToast(quest) {
+  if (!quest) return;
+  showAchievementUnlockToast([{
+    title: `${quest.title} claimed`,
+    exp: quest.exp,
+    coins: quest.coins,
+  }]);
+  const title = document.querySelector("#achievementToastTitle");
+  if (title) title.textContent = "Quest Reward";
+}
+
+function smokeProfile(overrides = {}) {
+  return profileWithEconomy({
+    username: "progress_smoke",
+    email: "progress-smoke@example.com",
+    tag: "SMOK",
+    verified: true,
+    selectedCharacterId: "honeyBear",
+    ownedCharacterIds: ["honeyBear"],
+    achievements: [],
+    achievementStats: defaultAchievementStats(),
+    questState: defaultQuestState(),
+    ...overrides,
+  });
+}
+
+function smokeClaimQuestReward(profile, type, quest) {
+  if (!questReady(profile, type, quest)) return profile;
+  const state = normalizeQuestState(profile);
+  const claimedKey = type === "weekly" ? "weeklyClaimed" : "dailyClaimed";
+  const withReward = addExperience(profileWithEconomy(profile, {
+    coins: normalizeEconomy(profile).coins + quest.coins,
+    questState: {
+      ...state,
+      [claimedKey]: [...state[claimedKey], quest.id],
+    },
+  }), quest.exp);
+  return applyQuestProgressToProfile(withReward, { coinsEarned: quest.coins });
+}
+
+function runProgressionSmokeTest() {
+  const achievementCases = [
+    { id: "inviteSent", profile: smokeProfile({ achievementStats: defaultAchievementStats({ invitesSent: 1 }) }) },
+    { id: "fashionFan", profile: smokeProfile({ achievementStats: defaultAchievementStats({ avatarChanges: 1 }) }) },
+    { id: "firstWin", profile: smokeProfile({ totalWins: 1 }) },
+    { id: "socialStarter", profile: smokeProfile({ achievementStats: defaultAchievementStats({ friendsAdded: 1 }) }) },
+    { id: "friendlyRival", profile: smokeProfile({ achievementStats: defaultAchievementStats({ separateDeviceMatches: 1 }) }) },
+    { id: "cleanVictory", profile: smokeProfile(), event: { cleanVictory: true } },
+    { id: "closeCall", profile: smokeProfile(), event: { closeCall: true } },
+    { id: "hotStreak", profile: smokeProfile({ winStreak: 3 }) },
+    { id: "powerPlayer", profile: smokeProfile({ achievementStats: defaultAchievementStats({ powerWins: 1 }) }) },
+    { id: "noQuitter", profile: smokeProfile({ achievementStats: defaultAchievementStats({ noQuitterReturns: 1 }) }) },
+    { id: "goodSport", profile: smokeProfile({ achievementStats: defaultAchievementStats({ matchesFinished: 10 }) }) },
+    { id: "risingStar", profile: smokeProfile({ level: 5 }) },
+    { id: "coinCollector", profile: smokeProfile({ achievementStats: defaultAchievementStats({ totalCoinsEarned: 500 }) }) },
+    { id: "bigSpender", profile: smokeProfile({ achievementStats: defaultAchievementStats({ totalCoinsSpent: 250 }) }) },
+    { id: "classicMaster", profile: smokeProfile({ achievementStats: defaultAchievementStats({ standardWins: 10 }) }) },
+    { id: "unstoppable", profile: smokeProfile({ winStreak: 5 }) },
+    { id: "veteran", profile: smokeProfile({ level: 10 }) },
+    { id: "expertsOnly", profile: smokeProfile({ level: 15 }) },
+    { id: "tooDamnGood", profile: smokeProfile({ winStreak: 10 }) },
+    { id: "masterOfTheGame", profile: smokeProfile({ level: 20 }) },
   ];
+  const achievementResults = achievementCases.map((testCase) => {
+    const result = awardEligibleAchievements(testCase.profile, testCase.event || {});
+    const unlocked = result.unlocked.map((item) => item.id);
+    const reward = achievementById(testCase.id);
+    return {
+      id: testCase.id,
+      ok: unlocked.includes(testCase.id)
+        && result.profile.achievements.includes(testCase.id)
+        && normalizeEconomy(result.profile).coins >= reward.coins,
+      unlocked,
+    };
+  });
+
+  const negativeAchievementResults = [
+    { id: "hotStreak", profile: smokeProfile({ winStreak: 2 }), event: {} },
+    { id: "goodSport", profile: smokeProfile({ achievementStats: defaultAchievementStats({ matchesFinished: 9 }) }), event: {} },
+    { id: "coinCollector", profile: smokeProfile({ achievementStats: defaultAchievementStats({ totalCoinsEarned: 499 }) }), event: {} },
+    { id: "bigSpender", profile: smokeProfile({ achievementStats: defaultAchievementStats({ totalCoinsSpent: 249 }) }), event: {} },
+  ].map((testCase) => {
+    const result = awardEligibleAchievements(testCase.profile, testCase.event);
+    return {
+      id: testCase.id,
+      ok: !result.unlocked.some((item) => item.id === testCase.id),
+      unlocked: result.unlocked.map((item) => item.id),
+    };
+  });
+
+  const questResults = [
+    ...dailyQuests.map((quest) => ({ type: "daily", quest })),
+    ...weeklyQuests.map((quest) => ({ type: "weekly", quest })),
+  ].map(({ type, quest }) => {
+    const beforeTarget = Math.max(0, quest.target - 1);
+    const notReadyProfile = applyQuestProgressToProfile(smokeProfile(), { [quest.metric]: beforeTarget });
+    const readyProfile = applyQuestProgressToProfile(smokeProfile(), { [quest.metric]: quest.target });
+    const claimedProfile = smokeClaimQuestReward(readyProfile, type, quest);
+    return {
+      id: quest.id,
+      type,
+      ok: !questReady(notReadyProfile, type, quest)
+        && questReady(readyProfile, type, quest)
+        && questClaimed(claimedProfile, type, quest.id)
+        && !questReady(claimedProfile, type, quest)
+        && normalizeEconomy(claimedProfile).coins >= quest.coins,
+      readyAtTarget: questReady(readyProfile, type, quest),
+      claimed: questClaimed(claimedProfile, type, quest.id),
+    };
+  });
+
+  const failures = [...achievementResults, ...negativeAchievementResults, ...questResults].filter((result) => !result.ok);
+  return {
+    ok: failures.length === 0,
+    counts: {
+      achievements: achievementResults.length,
+      negativeAchievementChecks: negativeAchievementResults.length,
+      quests: questResults.length,
+      failures: failures.length,
+    },
+    failures,
+    achievements: achievementResults,
+    negativeAchievementChecks: negativeAchievementResults,
+    quests: questResults,
+  };
 }
 
 function profileCardMarkup(username, options = {}) {
@@ -2706,10 +3423,6 @@ function profileCardMarkup(username, options = {}) {
         <div>
           <strong>Level ${progress.level}</strong>
         </div>
-      </div>
-      <div class="achievement-panel">
-        <strong>Achievements</strong>
-        ${achievementItems(username).map((item) => `<div>${item}</div>`).join("")}
       </div>
     </div>
   `;
@@ -2762,7 +3475,6 @@ function renderProfile() {
   const streakEl = document.querySelector("#profileWinStreak");
   streakEl.textContent = progress.winStreak > 0 ? `${progress.winStreak} game streak` : "";
   streakEl.hidden = progress.winStreak === 0;
-  document.querySelector("#profileAchievements").innerHTML = achievementItems(username).map((item) => `<div>${item}</div>`).join("");
   const mockPanel = document.querySelector(".mock-testing-panel");
   if (mockPanel) mockPanel.hidden = !devToolsEnabled();
   renderAuthFlowPanels();
@@ -3263,12 +3975,15 @@ async function sendFriendRequest(user) {
 async function acceptFriendRequest(notice) {
   if (firebaseUser && firebaseProfile && notice.senderUid) {
     await acceptFirebaseFriendRequest(firebaseUser.uid, firebaseProfileDocument(firebaseProfile), notice);
+    await applyAchievementEventToActiveProfile({ stats: { friendsAdded: 1 } });
     await refreshFirebaseSocialData();
     renderNotificationBadge();
     return;
   }
   addFriendForAccount(notice.recipient, notice.sender);
   addFriendForAccount(notice.sender, notice.recipient);
+  applyAchievementEventToProfile(notice.recipient, { stats: { friendsAdded: 1 } });
+  applyAchievementEventToProfile(notice.sender, { stats: { friendsAdded: 1 } });
   setNotifications(getNotifications().filter((candidate) => candidate.id !== notice.id));
   renderNotificationBadge();
 }
@@ -3533,6 +4248,7 @@ async function sendGameInvite(friendId) {
   } else {
     setNotifications([notification, ...existing], friend.username);
   }
+  await applyAchievementEventToActiveProfile({ stats: { invitesSent: 1 }, questStats: { invitesSent: 1 } });
   setActiveInviteId(notification.id);
   setActiveInviteData(notification);
   document.querySelector("#inviteFriendDialog").close();
@@ -3623,6 +4339,12 @@ function renderNotificationBadge() {
   if (!badge) return;
   const activeUser = getActiveUsername();
   badge.hidden = !getNotifications().some((notice) => notice.unread && (!notice.recipient || notice.recipient === activeUser));
+}
+
+function renderQuestBadge() {
+  const badge = document.querySelector("#questBadge");
+  if (!badge) return;
+  badge.hidden = !hasReadyQuests();
 }
 
 function lobbyParticipants(invite) {
@@ -3926,8 +4648,10 @@ async function sendLobbyChatText(text) {
 }
 
 function renderGlobalMockSwitcher() {
+  const switcher = document.querySelector("#globalMockSwitcher");
   const label = document.querySelector("#globalMockAccountLabel");
   const button = document.querySelector("#globalSwitchAccount");
+  if (switcher) switcher.hidden = !devToolsEnabled();
   if (!label) return;
   const username = getActiveUsername();
   if (firebaseUser) {
@@ -4041,6 +4765,7 @@ function ownsCharacter(characterId) {
 }
 
 function setSelectedCharacter(id) {
+  const previousId = getSelectedCharacter().id;
   if (firebaseUser && firebaseProfile) {
     firebaseProfile = { ...firebaseProfile, selectedCharacterId: id };
     writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
@@ -4050,6 +4775,9 @@ function setSelectedCharacter(id) {
     })).catch((error) => console.warn("Unable to sync selected character", error));
   }
   writeAccountJson(CHARACTER_KEY, id);
+  if (!firebaseUser && previousId !== id) {
+    applyAchievementEventToActiveProfile({ stats: { avatarChanges: 1 } });
+  }
   renderSelectedCharacter();
   renderCharacterStore();
 }
@@ -4087,10 +4815,15 @@ async function saveSelectedCharacter() {
       coins: economy.coins - unlockPrice,
       selectedCharacterId: characterId,
       ownedCharacterIds: alreadyOwned ? owned : [...owned, characterId],
+      achievementStats: addAchievementStats(local.achievementStats, {
+        avatarChanges: local.selectedCharacterId !== characterId ? 1 : 0,
+        totalCoinsSpent: unlockPrice,
+      }),
     });
+    const achievementResult = awardEligibleAchievements(next, {});
     return {
-      write: firebaseDocumentFromLocalProfile(next),
-      result: { ok: true, profile: next, unlocked: !alreadyOwned, spent: unlockPrice },
+      write: firebaseDocumentFromLocalProfile(achievementResult.profile),
+      result: { ok: true, profile: achievementResult.profile, unlocked: !alreadyOwned, spent: unlockPrice, unlockedAchievements: achievementResult.unlocked },
     };
   });
   if (!updated.ok) {
@@ -4163,14 +4896,16 @@ function renderCharacterStore() {
 
 document.querySelector("#menuNewGame").addEventListener("click", () => showScreen("modeScreen"));
 document.querySelector("#menuNewGame").addEventListener("click", playMenuSound);
-document.querySelector("#menuLoadGame").addEventListener("click", () => showScreen("loadScreen"));
-document.querySelector("#menuLoadGame").addEventListener("click", playMenuSound);
+document.querySelector("#menuAchievements").addEventListener("click", () => showScreen("achievementsScreen"));
+document.querySelector("#menuAchievements").addEventListener("click", playMenuSound);
 document.querySelector("#menuStore").addEventListener("click", () => showScreen("storeScreen"));
 document.querySelector("#menuStore").addEventListener("click", playMenuSound);
 document.querySelector("#menuFriends").addEventListener("click", () => requireProfile("friendsScreen"));
 document.querySelector("#menuFriends").addEventListener("click", playMenuSound);
 document.querySelector("#menuNotifications").addEventListener("click", () => requireProfile("notificationsScreen"));
 document.querySelector("#menuNotifications").addEventListener("click", playMenuSound);
+document.querySelector("#menuQuests").addEventListener("click", () => showScreen("questsScreen"));
+document.querySelector("#menuQuests").addEventListener("click", playMenuSound);
 document.querySelector("#menuProfile").addEventListener("click", () => {
   previousScreen = "mainMenuScreen";
   showScreen("profileScreen");
@@ -4218,10 +4953,13 @@ document.querySelector("#openAddFriend").addEventListener("click", () => {
 document.querySelector("#openAddFriend").addEventListener("click", playMenuSound);
 document.querySelector("#notificationsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
 document.querySelector("#notificationsBack").addEventListener("click", playMenuSound);
+document.querySelector("#achievementsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
+document.querySelector("#achievementsBack").addEventListener("click", playMenuSound);
+document.querySelector("#questsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
+document.querySelector("#questsBack").addEventListener("click", playMenuSound);
 document.querySelector("#globalSwitchAccount").addEventListener("click", async () => {
   if (firebaseUser) {
-    resetSignedOutAuthView();
-    await signOutCurrentUser();
+    await signOutToLanding();
     return;
   }
   openMockAccountSwitcher();
@@ -4412,6 +5150,10 @@ document.querySelector("#resetSettings").addEventListener("click", () => {
   renderSettings();
 });
 document.querySelector("#resetSettings").addEventListener("click", playMenuSound);
+document.querySelector("#settingsSignOut").addEventListener("click", async () => {
+  await signOutToLanding();
+});
+document.querySelector("#settingsSignOut").addEventListener("click", playMenuSound);
 document.querySelector("#openPrivacyPolicy").addEventListener("click", () => openLegalDialog("privacy"));
 document.querySelector("#openPrivacyPolicy").addEventListener("click", playMenuSound);
 document.querySelector("#openTerms").addEventListener("click", () => openLegalDialog("terms"));
@@ -4469,37 +5211,13 @@ document.querySelector("#hostClosedOkay").addEventListener("click", () => {
   showScreen("mainMenuScreen");
 });
 document.querySelector("#hostClosedOkay").addEventListener("click", playMenuSound);
-document.querySelector("#saveAndLeave").addEventListener("click", (event) => {
+document.querySelector("#confirmReturnToMenu").addEventListener("click", (event) => {
   event.preventDefault();
-  const saveFields = document.querySelector("#saveNameFields");
-  if (saveFields.hidden) {
-    showSaveNameStep();
-    return;
-  }
   document.querySelector("#savePromptDialog").close();
-  saveAndReturn();
+  confirmReturnToMenu();
 });
-document.querySelector("#saveAndLeave").addEventListener("click", playMenuSound);
-document.querySelector("#savePromptBack").addEventListener("click", (event) => {
-  const saveFields = document.querySelector("#saveNameFields");
-  if (!saveFields.hidden) {
-    event.preventDefault();
-    saveFields.hidden = true;
-    document.querySelector("#leaveWithoutSave").hidden = false;
-    document.querySelector("#leaveWithoutSave").focus();
-  }
-});
+document.querySelector("#confirmReturnToMenu").addEventListener("click", playMenuSound);
 document.querySelector("#savePromptBack").addEventListener("click", playMenuSound);
-document.querySelector("#leaveWithoutSave").addEventListener("click", () => {
-  if (game && game.submode === "Separate Devices" && !game.over) {
-    markGamePlayerLeft(getActiveUsername());
-  } else {
-    closeGameLobbyForActivePlayer();
-    game = null;
-  }
-  showScreen("mainMenuScreen");
-});
-document.querySelector("#leaveWithoutSave").addEventListener("click", playMenuSound);
 document.querySelector("#existingSaveBack").addEventListener("click", (event) => {
   event.preventDefault();
   document.querySelector("#existingSaveDialog").close();
@@ -4563,6 +5281,10 @@ function chooseMode(mode) {
 
 function playMenuSound() {
   playSound("menu");
+}
+
+if (devToolsEnabled()) {
+  window.__runProgressionSmokeTest = runProgressionSmokeTest;
 }
 
 cleanupMockSeedData();

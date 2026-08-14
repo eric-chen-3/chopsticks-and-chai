@@ -11,7 +11,7 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="mock-switcher" id="globalMockSwitcher" aria-label="Account">
+      <section class="mock-switcher" id="globalMockSwitcher" aria-label="Account" hidden>
         <span id="globalMockAccountLabel">Mock: you</span>
         <button id="globalSwitchAccount" type="button">Switch</button>
       </section>
@@ -20,6 +20,15 @@
         <div class="menu-card main-menu-card">
           <button class="icon-button notification-corner" id="menuNotifications" type="button" aria-label="Notifications">
             <span id="notificationBadge" aria-hidden="true" hidden>!</span>
+          </button>
+          <button class="icon-button quest-corner" id="menuQuests" type="button" aria-label="Quests">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M6 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V5a1 1 0 0 1 1-1z"></path>
+              <path d="M8 4v16"></path>
+              <path d="M11 9h5"></path>
+              <path d="M11 13h4"></path>
+            </svg>
+            <span id="questBadge" aria-hidden="true" hidden>!</span>
           </button>
           <div class="cafe-window" aria-hidden="true">
             <span></span>
@@ -41,10 +50,10 @@
           <div class="active-lobby-prompts" id="activeLobbyPrompts"></div>
           <div class="menu-actions">
             <button id="menuNewGame" type="button">New Game</button>
-            <button id="menuLoadGame" type="button">Load Game</button>
+            <button id="menuProfile" type="button">Profile</button>
             <button id="menuStore" type="button">Store</button>
             <button id="menuFriends" type="button">Friends</button>
-            <button id="menuProfile" type="button">Profile</button>
+            <button id="menuAchievements" type="button">Achievements</button>
             <button id="menuSettings" type="button">Settings</button>
           </div>
         </div>
@@ -63,7 +72,7 @@
             </div>
             <div class="level-bar"><span id="profileExpFill"></span></div>
             <div class="profile-stat-row">
-              <span id="profileCoins">0 <span class="coin-icon" aria-label="coin">🪙</span></span>
+              <span id="profileCoins">0 <span class="coin-icon" aria-label="coin"></span></span>
               <span id="profileWinStreak" hidden></span>
             </div>
           </div>
@@ -71,12 +80,8 @@
             <strong>Mock Testing</strong>
             <div>
               <button class="ghost-button" id="resetMockLevel" type="button">Reset Level</button>
-              <button class="ghost-button" id="resetMockCoins" type="button">Reset <span class="coin-icon" aria-label="coin">🪙</span></button>
+              <button class="ghost-button" id="resetMockCoins" type="button">Reset <span class="coin-icon" aria-label="coin"></span></button>
             </div>
-          </div>
-          <div class="achievement-panel">
-            <strong>Achievements</strong>
-            <div id="profileAchievements"></div>
           </div>
           <div class="auth-flow" id="authFlow">
             <div class="auth-panel" id="authLandingPanel">
@@ -175,6 +180,31 @@
         </div>
       </section>
 
+      <section class="menu-screen" id="achievementsScreen" hidden>
+        <div class="menu-card store-card">
+          <p class="eyebrow">Achievements</p>
+          <h1>Cafe Milestones</h1>
+          <div class="achievement-list" id="achievementList"></div>
+          <button class="ghost-button" id="achievementsBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="menu-screen" id="questsScreen" hidden>
+        <div class="menu-card store-card">
+          <p class="eyebrow">Quests</p>
+          <h1>Cafe Journal</h1>
+          <div class="quest-section">
+            <h2>Daily Quests</h2>
+            <div class="achievement-list" id="dailyQuestList"></div>
+          </div>
+          <div class="quest-section">
+            <h2>Weekly Quests</h2>
+            <div class="achievement-list" id="weeklyQuestList"></div>
+          </div>
+          <button class="ghost-button" id="questsBack" type="button">Back</button>
+        </div>
+      </section>
+
       <section class="menu-screen" id="waitingLobbyScreen" hidden>
         <div class="menu-card">
           <p class="eyebrow">Separate Devices</p>
@@ -204,7 +234,7 @@
         <div class="menu-card store-card">
           <p class="eyebrow">Store</p>
           <h1>Buy Avatar</h1>
-          <p class="store-balance" id="storeCoinBalance">0 <span class="coin-icon" aria-label="coin">🪙</span></p>
+          <p class="store-balance" id="storeCoinBalance">0 <span class="coin-icon" aria-label="coin"></span></p>
           <p class="form-message" id="storeMessage"></p>
           <div class="character-store" id="characterStore"></div>
           <button class="save-character-button" id="saveCharacter" type="button">Save Character</button>
@@ -272,6 +302,7 @@
           </div>
           <div class="menu-actions">
             <button id="resetSettings" type="button">Reset Settings</button>
+            <button class="danger-action" id="settingsSignOut" type="button">Sign Out</button>
             <button class="ghost-button" id="settingsBack" type="button">Back</button>
           </div>
         </div>
@@ -297,7 +328,7 @@
                 </svg>
               </button>
               <div class="game-menu-dropdown" id="gameMenuDropdown" hidden>
-                <button id="gameReturnMenu" type="button">Return to Main Menu</button>
+                <button class="danger-action" id="gameReturnMenu" type="button">Return to Main Menu</button>
                 <button id="gameSettings" type="button">Settings</button>
               </div>
             </div>
@@ -354,7 +385,7 @@
             <p id="rewardXpText"></p>
             <div class="coin-reward-row" id="coinRewardRow">
               <span class="coin-pile" id="coinPile"></span>
-              <strong id="rewardCoinText">Total: 0 🪙 (+0 🪙)</strong>
+              <strong id="rewardCoinText">Total: 0 <span class="coin-icon" aria-label="coin"></span> (+0 <span class="coin-icon" aria-label="coin"></span>)</strong>
             </div>
           </div>
           <button class="save-action" id="returnToLobby" value="lobby" type="submit" hidden>Return to Lobby</button>
@@ -372,6 +403,15 @@
         </div>
         <strong id="forfeitTimerCount">30</strong>
       </aside>
+
+      <div class="achievement-toast" id="achievementToast" hidden>
+        <strong id="achievementToastTitle">Achievement Unlocked</strong>
+        <span id="achievementToastNames"></span>
+        <div class="achievement-toast-rewards">
+          <span id="achievementToastXp">+0 EXP</span>
+          <span id="achievementToastCoins">+0 <span class="coin-icon" aria-label="coin"></span></span>
+        </div>
+      </div>
 
       <dialog id="declineGameDialog">
         <form method="dialog">
@@ -405,8 +445,7 @@
             <label for="saveNameInput">Save name</label>
             <input id="saveNameInput" maxlength="28" placeholder="Save name">
           </div>
-          <button class="leave-action" id="leaveWithoutSave" value="leave" type="submit" autofocus>Leave Without Saving</button>
-          <button class="save-action" id="saveAndLeave" value="save" type="submit">Save and Leave</button>
+          <button class="danger-action" id="confirmReturnToMenu" value="leave" type="submit" autofocus>Return to Main Menu</button>
           <button class="ghost-button" id="savePromptBack" value="back" type="submit">Back</button>
         </form>
       </dialog>
