@@ -92,6 +92,7 @@ const weeklyQuests = [
 
 let game;
 let previousScreen = "mainMenuScreen";
+let collectionBackScreen = "mainMenuScreen";
 let pendingSaveName = "";
 let pendingRenameId = "";
 let audioContext;
@@ -410,6 +411,18 @@ function showScreen(screenId) {
   if (screenId === "loadScreen") renderSaveList();
   if (screenId === "settingsScreen") renderSettings();
   writePresence();
+}
+
+function openCollectionScreen(screenId) {
+  const current = activeScreenId();
+  if (current && current !== screenId) collectionBackScreen = current;
+  showScreen(screenId);
+}
+
+function closeCollectionScreen() {
+  const target = collectionBackScreen || "mainMenuScreen";
+  collectionBackScreen = "mainMenuScreen";
+  showScreen(target);
 }
 
 function currentPlayer() {
@@ -4896,15 +4909,15 @@ function renderCharacterStore() {
 
 document.querySelector("#menuNewGame").addEventListener("click", () => showScreen("modeScreen"));
 document.querySelector("#menuNewGame").addEventListener("click", playMenuSound);
-document.querySelector("#menuAchievements").addEventListener("click", () => showScreen("achievementsScreen"));
+document.querySelector("#menuAchievements").addEventListener("click", () => openCollectionScreen("achievementsScreen"));
 document.querySelector("#menuAchievements").addEventListener("click", playMenuSound);
-document.querySelector("#menuStore").addEventListener("click", () => showScreen("storeScreen"));
+document.querySelector("#menuStore").addEventListener("click", () => openCollectionScreen("storeScreen"));
 document.querySelector("#menuStore").addEventListener("click", playMenuSound);
 document.querySelector("#menuFriends").addEventListener("click", () => requireProfile("friendsScreen"));
 document.querySelector("#menuFriends").addEventListener("click", playMenuSound);
 document.querySelector("#menuNotifications").addEventListener("click", () => requireProfile("notificationsScreen"));
 document.querySelector("#menuNotifications").addEventListener("click", playMenuSound);
-document.querySelector("#menuQuests").addEventListener("click", () => showScreen("questsScreen"));
+document.querySelector("#menuQuests").addEventListener("click", () => openCollectionScreen("questsScreen"));
 document.querySelector("#menuQuests").addEventListener("click", playMenuSound);
 document.querySelector("#menuProfile").addEventListener("click", () => {
   previousScreen = "mainMenuScreen";
@@ -4934,8 +4947,10 @@ document.querySelector("#separateDevicesMode").addEventListener("click", openSep
 document.querySelector("#separateDevicesMode").addEventListener("click", playMenuSound);
 document.querySelector("#loadBack").addEventListener("click", () => showScreen("mainMenuScreen"));
 document.querySelector("#loadBack").addEventListener("click", playMenuSound);
-document.querySelector("#storeBack").addEventListener("click", () => showScreen("mainMenuScreen"));
+document.querySelector("#storeBack").addEventListener("click", closeCollectionScreen);
 document.querySelector("#storeBack").addEventListener("click", playMenuSound);
+document.querySelector("#storeTopBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#storeTopBack").addEventListener("click", playMenuSound);
 document.querySelector("#saveCharacter").addEventListener("click", async () => {
   if (await saveSelectedCharacter()) {
     const character = characters.find((candidate) => candidate.id === (pendingCharacterId || getSelectedCharacter().id)) || getSelectedCharacter();
@@ -4953,10 +4968,14 @@ document.querySelector("#openAddFriend").addEventListener("click", () => {
 document.querySelector("#openAddFriend").addEventListener("click", playMenuSound);
 document.querySelector("#notificationsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
 document.querySelector("#notificationsBack").addEventListener("click", playMenuSound);
-document.querySelector("#achievementsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
+document.querySelector("#achievementsBack").addEventListener("click", closeCollectionScreen);
 document.querySelector("#achievementsBack").addEventListener("click", playMenuSound);
-document.querySelector("#questsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
+document.querySelector("#achievementsTopBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#achievementsTopBack").addEventListener("click", playMenuSound);
+document.querySelector("#questsBack").addEventListener("click", closeCollectionScreen);
 document.querySelector("#questsBack").addEventListener("click", playMenuSound);
+document.querySelector("#questsTopBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#questsTopBack").addEventListener("click", playMenuSound);
 document.querySelector("#globalSwitchAccount").addEventListener("click", async () => {
   if (firebaseUser) {
     await signOutToLanding();

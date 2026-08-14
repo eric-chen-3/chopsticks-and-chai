@@ -511,6 +511,43 @@ button.save-action {
   z-index: 1;
 }
 
+.screen-back-icon {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+  color: rgba(91, 88, 109, 0.44);
+  display: grid;
+  place-items: center;
+}
+
+.screen-back-icon:hover,
+.screen-back-icon:focus-visible {
+  background: rgba(255, 255, 255, 0.54);
+  color: var(--ink);
+}
+
+.screen-back-icon svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.screen-heading-offset {
+  padding-left: 42px;
+}
+
 .card-title-row {
   display: flex;
   align-items: start;
@@ -568,6 +605,12 @@ button.save-action {
 .character-card small {
   color: var(--muted);
   font-size: 0.72rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  line-height: 1.2;
 }
 
 .character-card .character-avatar {
@@ -1225,6 +1268,18 @@ button.save-action {
   color: #7a5b25;
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.store-balance {
+  position: absolute !important;
+  top: 14px;
+  right: 14px;
+  z-index: 3;
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
 }
 
 .achievement-toast.payout .achievement-toast-rewards span {
