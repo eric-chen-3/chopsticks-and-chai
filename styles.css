@@ -993,6 +993,17 @@ button.save-action {
   gap: 10px;
 }
 
+#openLoginFlow,
+#submitLogin {
+  background: #cfe9c9;
+}
+
+#openCreateAccountFlow,
+#continueCreateAccount,
+#submitCreateAccount {
+  background: var(--baby-blue);
+}
+
 .form-message {
   min-height: 20px;
   color: var(--muted);

@@ -92,6 +92,15 @@ service cloud.firestore {
         && optionalString(request.resource.data, "selectedCharacterId", 40);
     }
 
+    function validUsernameHandle() {
+      return request.resource.data.keys().hasOnly([
+          "uid", "username", "updatedAt"
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.username is string
+        && request.resource.data.username.size() <= 18;
+    }
+
     function validLobby() {
       return request.resource.data.keys().hasOnly([
           "id", "type", "title", "text", "sender", "senderUid", "senderTag",
@@ -149,7 +158,26 @@ service cloud.firestore {
 
     match /publicProfiles/{profileId} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && validPublicProfile();
+      allow create: if signedIn()
+        && validPublicProfile()
+        && !exists(/databases/$(database)/documents/publicProfiles/$(profileId));
+      allow update: if signedIn()
+        && validPublicProfile()
+        && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn()
+        && resource.data.uid == request.auth.uid;
+    }
+
+    match /usernameHandles/{username} {
+      allow read: if true;
+      allow create: if signedIn()
+        && validUsernameHandle()
+        && request.resource.data.username == username
+        && !exists(/databases/$(database)/documents/usernameHandles/$(username));
+      allow update: if signedIn()
+        && validUsernameHandle()
+        && request.resource.data.username == username
+        && resource.data.uid == request.auth.uid;
       allow delete: if signedIn()
         && resource.data.uid == request.auth.uid;
     }

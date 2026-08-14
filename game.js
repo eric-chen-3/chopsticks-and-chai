@@ -5,6 +5,7 @@ import {
   deleteFirebaseLobby,
   deleteFirebaseSave,
   findPublicProfile,
+  isUsernameTaken,
   listFriends,
   listLobbiesForUser,
   listNotifications,
@@ -42,6 +43,7 @@ const ACTIVE_INVITE_KEY = "chopstickDuel.activeInvite";
 const LOBBIES_KEY = "chopstickDuel.lobbies";
 const ECONOMY_RESET_KEY = "chopstickDuel.economyReset.v1";
 const SLEEPY_PANDA_RESET_KEY = "chopstickDuel.sleepyPandaReset.v1";
+const MOCK_SEED_CLEANUP_KEY = "chopstickDuel.mockSeedCleanup.v1";
 const MAX_SAVES = 3;
 const MAX_LOBBIES = 7;
 const WIN_XP = 50;
@@ -83,6 +85,8 @@ let gameStateSyncTimer = null;
 let lobbyChatUnsubscribe = null;
 let lobbyChatSubscriptionId = "";
 let firebaseLobbyMessages = {};
+let authFlowMode = "landing";
+let pendingCreateAccount = null;
 
 function devToolsEnabled() {
   try {
@@ -1746,6 +1750,7 @@ function allKnownUsernames() {
 }
 
 function upsertMockUserFromProfile(profile) {
+  if (!localMockAccountsEnabled()) return;
   if (!profile || !profile.username) return;
   const users = getMockUsers();
   const existing = users.find((user) => user.username === profile.username);
@@ -1795,27 +1800,11 @@ function resetMockCoins(username) {
 function runEconomyResetMigration() {
   if (typeof localStorage !== "undefined" && localStorage.getItem(ECONOMY_RESET_KEY) === "true") return;
   allKnownUsernames().forEach((username) => resetProfileProgress(username, { resetCoins: true, resetRecord: true }));
-  const humpday = profileWithEconomy(getProfile("humpday") || {
-    username: "humpday",
-    phone: "mock-humpday",
-    tag: profileTag("humpday") || "HUMP",
-    verified: true,
-  }, { level: 1, experience: 0, coins: 1000, winStreak: 0, totalWins: 0, totalLosses: 0 });
-  const g = profileWithEconomy(getProfile("g") || {
-    username: "g",
-    phone: "mock-g",
-    tag: profileTag("g") || "GGGG",
-    verified: true,
-  }, { level: 1, experience: 0, coins: 100, winStreak: 0, totalWins: 0, totalLosses: 0 });
-  setProfile(humpday, "humpday");
-  setProfile(g, "g");
-  upsertMockUserFromProfile(humpday);
-  upsertMockUserFromProfile(g);
   if (typeof localStorage !== "undefined") localStorage.setItem(ECONOMY_RESET_KEY, "true");
 }
 
 function resetSleepyPandaMockAccount() {
-  if (typeof localStorage === "undefined" || localStorage.getItem(SLEEPY_PANDA_RESET_KEY) === "true") return;
+  if (typeof localStorage === "undefined" || localStorage.getItem(SLEEPY_PANDA_RESET_KEY) === "true" || !localMockAccountsEnabled()) return;
   const username = "sleepy_panda";
   setMockUsers(getMockUsers().filter((user) => user.username !== username));
   [
@@ -1828,6 +1817,19 @@ function resetSleepyPandaMockAccount() {
   ].forEach((key) => removeStorageKey(accountKey(key, username)));
   if (getStoredActiveUsername() === username) removeStorageKey(ACTIVE_USER_KEY);
   localStorage.setItem(SLEEPY_PANDA_RESET_KEY, "true");
+}
+
+function cleanupMockSeedData() {
+  if (typeof localStorage === "undefined" || localStorage.getItem(MOCK_SEED_CLEANUP_KEY) === "true") return;
+  const seededUsernames = ["humpday", "g", "sleepy_panda", "mochi_bunny", "milk_tea_cat"];
+  setMockUsers([]);
+  seededUsernames.forEach((username) => {
+    [PROFILE_KEY, SAVE_KEY, SETTINGS_KEY, CHARACTER_KEY, FRIENDS_KEY, NOTIFICATIONS_KEY].forEach((key) => {
+      removeStorageKey(accountKey(key, username));
+    });
+  });
+  if (seededUsernames.includes(getStoredActiveUsername())) removeStorageKey(ACTIVE_USER_KEY);
+  localStorage.setItem(MOCK_SEED_CLEANUP_KEY, "true");
 }
 
 function getStoredActiveUsername() {
@@ -1909,26 +1911,19 @@ async function deleteSignedInFirebaseAccount() {
 
 function getMockUsers() {
   const users = readJson(MOCK_USERS_KEY, []);
-  if (users.length > 0) {
-    let changed = false;
-    const seen = new Set(users.map((user) => normalizeTag(user.tag || "")).filter(Boolean));
-    const tagged = users.map((user) => {
-      if (user.tag) return user;
-      let tag = generateTag(seen);
-      while (seen.has(tag)) tag = generateTag(seen);
-      seen.add(tag);
-      changed = true;
-      return { ...user, tag };
-    });
-    if (changed) writeJson(MOCK_USERS_KEY, tagged);
-    return tagged;
-  }
-  const seeded = [
-    { username: "mochi_bunny", phone: "555-101-2001", tag: "M0CH" },
-    { username: "milk_tea_cat", phone: "555-101-2002", tag: "M1LK" },
-  ];
-  writeJson(MOCK_USERS_KEY, seeded);
-  return seeded;
+  if (!localMockAccountsEnabled()) return [];
+  let changed = false;
+  const seen = new Set(users.map((user) => normalizeTag(user.tag || "")).filter(Boolean));
+  const tagged = users.map((user) => {
+    if (user.tag) return user;
+    let tag = generateTag(seen);
+    while (seen.has(tag)) tag = generateTag(seen);
+    seen.add(tag);
+    changed = true;
+    return { ...user, tag };
+  });
+  if (changed) writeJson(MOCK_USERS_KEY, tagged);
+  return tagged;
 }
 
 function setMockUsers(users) {
@@ -2714,15 +2709,16 @@ function renderProfile() {
   const isSetup = !profile;
   document.querySelector("#profileScreen").classList.toggle("profile-setup", isSetup);
   document.querySelector("#profileScreen").classList.toggle("profile-unverified", !firebaseUser);
-  document.querySelector("#profileUsername").value = profile ? profile.username : activeUsername;
+  if (authFlowMode !== "createPassword") {
+    document.querySelector("#profileUsername").value = profile ? profile.username : activeUsername;
+  }
   document.querySelector("#profileTag").value = profile ? `#${normalizeTag(profile.tag)}` : "";
-  document.querySelector("#profilePhone").value = profile ? (profile.email || profile.phone || "") : (firebaseUser ? firebaseUser.email || "" : "");
-  document.querySelector("#verificationCode").value = "";
+  if (authFlowMode !== "createPassword") {
+    document.querySelector("#profilePhone").value = profile ? (profile.email || profile.phone || "") : (firebaseUser ? firebaseUser.email || "" : "");
+  }
   document.querySelector("#profileMessage").textContent = firebaseUser && profile
     ? "Signed in with Firebase."
-    : firebaseUser
-      ? "Choose a username to finish your cafe profile."
-      : "Create an account or sign in with email and password to start playing.";
+    : authIntroMessage();
   const username = activeUsername || (profile ? profile.username : "Guest");
   const progress = profileProgress(username);
   const tag = profileTag(username);
@@ -2751,13 +2747,117 @@ function renderProfile() {
   document.querySelector("#profileAchievements").innerHTML = achievementItems(username).map((item) => `<div>${item}</div>`).join("");
   const mockPanel = document.querySelector(".mock-testing-panel");
   if (mockPanel) mockPanel.hidden = !devToolsEnabled();
-  document.querySelector("#profilePhoneSection").hidden = Boolean(firebaseUser && profile);
-  document.querySelector("#verifyPhoneSection").hidden = Boolean(firebaseUser && profile);
-  document.querySelector("#profileUsernameField").hidden = Boolean(firebaseUser && profile);
+  renderAuthFlowPanels();
   document.querySelector("#profileTagField").hidden = true;
-  document.querySelector("#verifyRow").hidden = Boolean(firebaseUser && profile);
-  document.querySelector("#sendVerification").textContent = firebaseUser ? "Save Profile" : "Create Account";
+  document.querySelector("#authFlow").hidden = Boolean(firebaseUser && profile);
+  document.querySelector("#saveProfile").hidden = true;
+  document.querySelector("#profileBack").hidden = !(firebaseUser && profile);
   document.querySelector("#deleteFirebaseAccount").hidden = !(firebaseUser && profile);
+}
+
+function authIntroMessage() {
+  if (firebaseUser) return "Choose a username to finish your cafe profile.";
+  if (authFlowMode === "login") return "Enter your email and password to log in.";
+  if (authFlowMode === "createDetails") return "Choose a username and enter your email.";
+  if (authFlowMode === "createPassword") return "Create a password to finish your account.";
+  return "Log in or create an account to start playing.";
+}
+
+function setAuthFlowMode(mode) {
+  authFlowMode = mode;
+  if (mode !== "createPassword") pendingCreateAccount = null;
+  document.querySelector("#profileMessage").textContent = authIntroMessage();
+  renderAuthFlowPanels();
+}
+
+function renderAuthFlowPanels() {
+  const signedInWithProfile = Boolean(firebaseUser && getProfile());
+  document.querySelector("#authLandingPanel").hidden = signedInWithProfile || authFlowMode !== "landing";
+  document.querySelector("#authCreateDetailsPanel").hidden = signedInWithProfile || authFlowMode !== "createDetails";
+  document.querySelector("#authCreatePasswordPanel").hidden = signedInWithProfile || authFlowMode !== "createPassword";
+  document.querySelector("#authLoginPanel").hidden = signedInWithProfile || authFlowMode !== "login";
+}
+
+async function continueCreateAccountFlow() {
+  const rawUsername = document.querySelector("#profileUsername").value;
+  const username = normalizeUsername(rawUsername);
+  const email = document.querySelector("#profilePhone").value.trim();
+  const message = document.querySelector("#profileMessage");
+  if (!username || !email) {
+    message.textContent = "Username and email are required.";
+    return false;
+  }
+  if (!isValidUsernameInput(rawUsername)) {
+    showInvalidInput("Usernames can use letters, numbers, underscores, and periods only. Max length: 18.");
+    return false;
+  }
+  try {
+    if (await isUsernameTaken(username)) {
+      message.textContent = "Username is already taken. Try a different username.";
+      return false;
+    }
+  } catch (error) {
+    message.textContent = authErrorMessage(error);
+    return false;
+  }
+  pendingCreateAccount = { username, email, tag: generateTag() };
+  document.querySelector("#createPassword").value = "";
+  document.querySelector("#confirmCreatePassword").value = "";
+  authFlowMode = "createPassword";
+  message.textContent = "Username is available. Create a password to finish.";
+  renderAuthFlowPanels();
+  return true;
+}
+
+async function submitCreateAccountFlow() {
+  const message = document.querySelector("#profileMessage");
+  if (!pendingCreateAccount) {
+    authFlowMode = "createDetails";
+    message.textContent = "Start by choosing a username and email.";
+    renderAuthFlowPanels();
+    return false;
+  }
+  const password = document.querySelector("#createPassword").value;
+  const confirmPassword = document.querySelector("#confirmCreatePassword").value;
+  if (password.length < 6) {
+    message.textContent = "Password must be at least 6 characters.";
+    return false;
+  }
+  if (password !== confirmPassword) {
+    message.textContent = "Passwords do not match.";
+    return false;
+  }
+  const nextProfile = profileWithEconomy({}, {
+    username: pendingCreateAccount.username,
+    email: pendingCreateAccount.email,
+    phone: pendingCreateAccount.email,
+    tag: pendingCreateAccount.tag,
+    verified: true,
+  });
+  try {
+    firebaseUser = await signUpWithEmail(pendingCreateAccount.email, password, firebaseDocumentFromLocalProfile(nextProfile));
+  } catch (error) {
+    message.textContent = authErrorMessage(error);
+    if ((error && error.code) === "app/username-taken") authFlowMode = "createDetails";
+    renderAuthFlowPanels();
+    return false;
+  }
+  setMockUsers([...getMockUsers().filter((user) => user.username !== nextProfile.username), {
+    username: nextProfile.username,
+    phone: nextProfile.email,
+    tag: nextProfile.tag,
+  }]);
+  setProfile(nextProfile, nextProfile.username);
+  setActiveUsername(nextProfile.username);
+  firebaseProfile = nextProfile;
+  firebaseUsernameUidMap[nextProfile.username] = firebaseUser.uid;
+  pendingCreateAccount = null;
+  authFlowMode = "landing";
+  startFirebaseDataListeners(firebaseUser.uid);
+  startPresenceHeartbeat();
+  message.textContent = "Account created.";
+  showScreen("mainMenuScreen");
+  return true;
 }
 
 async function saveProfile() {
@@ -2766,7 +2866,7 @@ async function saveProfile() {
   const current = getProfile();
   const tag = current ? normalizeTag(current.tag) : generateTag();
   const email = document.querySelector("#profilePhone").value.trim();
-  const password = document.querySelector("#verificationCode").value;
+  const password = "";
   const message = document.querySelector("#profileMessage");
   if (!username || !email || (!firebaseUser && password.length < 6)) {
     message.textContent = "Username, email, and a password of at least 6 characters are required.";
@@ -2822,8 +2922,8 @@ async function saveProfile() {
 }
 
 async function signInFromProfileFields() {
-  const email = document.querySelector("#profilePhone").value.trim();
-  const password = document.querySelector("#verificationCode").value;
+  const email = document.querySelector("#loginEmail").value.trim();
+  const password = document.querySelector("#loginPassword").value;
   const message = document.querySelector("#profileMessage");
   if (!email || !password) {
     message.textContent = "Email and password are required.";
@@ -2834,7 +2934,7 @@ async function signInFromProfileFields() {
     await loadFirebaseProfile(firebaseUser);
     return true;
   } catch (error) {
-    message.textContent = authErrorMessage(error);
+    message.textContent = "The email or password you entered is incorrect. Please try again.";
     return false;
   }
 }
@@ -2844,10 +2944,11 @@ function authErrorMessage(error) {
   if (code === "auth/email-already-in-use") return "That email already has an account. Try signing in.";
   if (code === "auth/invalid-email") return "Enter a valid email address.";
   if (code === "auth/weak-password") return "Password must be at least 6 characters.";
+  if (code === "app/username-taken") return "Username is already taken. Try a different username.";
   if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") return "Email or password is incorrect.";
   if (code === "auth/requires-recent-login") return "Please sign out, sign back in, and try deleting the account again.";
   if (code === "auth/operation-not-allowed") return "Enable Email/Password sign-in in Firebase Authentication first.";
-  if (String(error && error.message).includes("permission-denied")) return "Check Firestore security rules for user profile access.";
+  if ((error && error.code) === "permission-denied" || String(error && error.message).includes("permission-denied")) return "Publish the latest Firestore rules, then try again.";
   return "Firebase sign-in failed. Check your Firebase setup and try again.";
 }
 
@@ -3218,7 +3319,7 @@ function renameNoticeAccount(notice, oldUsername, newUsername) {
 }
 
 function deleteAccount(username) {
-  if (!username || username === "humpday") return false;
+  if (!username) return false;
   setMockUsers(getMockUsers().filter((user) => user.username !== username));
   [SAVE_KEY, SETTINGS_KEY, FRIENDS_KEY, NOTIFICATIONS_KEY, CHARACTER_KEY, PROFILE_KEY].forEach((baseKey) => removeStorageKey(accountKey(baseKey, username)));
   getMockUsers().forEach((user) => {
@@ -3227,8 +3328,7 @@ function deleteAccount(username) {
   });
   setLobbies(getLobbies().filter((lobby) => lobby.sender !== username && lobby.recipient !== username));
   if (getActiveUsername() === username) {
-    const profile = getProfile();
-    setActiveUsername(profile ? profile.username : "humpday");
+    removeStorageKey(ACTIVE_USER_KEY);
   }
   return true;
 }
@@ -3780,7 +3880,7 @@ function renderMockAccountList() {
       </div>
       <button type="button" data-action="switch">Switch</button>
       <button type="button" data-action="rename">Rename</button>
-      <button type="button" data-action="delete" ${account.username === "humpday" ? "disabled" : ""}>Delete</button>
+      <button type="button" data-action="delete">Delete</button>
     `;
     row.querySelector('[data-action="switch"]').addEventListener("click", () => {
       setActiveUsername(account.username);
@@ -4185,14 +4285,28 @@ document.querySelector("#saveProfile").addEventListener("click", async () => {
   if (await saveProfile() && getProfile()) showScreen(previousScreen);
 });
 document.querySelector("#saveProfile").addEventListener("click", playMenuSound);
-document.querySelector("#sendVerification").addEventListener("click", async () => {
-  if (await saveProfile() && getProfile()) showScreen(previousScreen);
+document.querySelector("#openLoginFlow").addEventListener("click", () => setAuthFlowMode("login"));
+document.querySelector("#openLoginFlow").addEventListener("click", playMenuSound);
+document.querySelector("#openCreateAccountFlow").addEventListener("click", () => setAuthFlowMode("createDetails"));
+document.querySelector("#openCreateAccountFlow").addEventListener("click", playMenuSound);
+document.querySelector("#createDetailsBack").addEventListener("click", () => setAuthFlowMode("landing"));
+document.querySelector("#createDetailsBack").addEventListener("click", playMenuSound);
+document.querySelector("#createPasswordBack").addEventListener("click", () => {
+  authFlowMode = "createDetails";
+  document.querySelector("#profileMessage").textContent = "Choose a username and enter your email.";
+  renderAuthFlowPanels();
 });
-document.querySelector("#sendVerification").addEventListener("click", playMenuSound);
-document.querySelector("#verifyCode").addEventListener("click", async () => {
+document.querySelector("#createPasswordBack").addEventListener("click", playMenuSound);
+document.querySelector("#loginBack").addEventListener("click", () => setAuthFlowMode("landing"));
+document.querySelector("#loginBack").addEventListener("click", playMenuSound);
+document.querySelector("#continueCreateAccount").addEventListener("click", continueCreateAccountFlow);
+document.querySelector("#continueCreateAccount").addEventListener("click", playMenuSound);
+document.querySelector("#submitCreateAccount").addEventListener("click", submitCreateAccountFlow);
+document.querySelector("#submitCreateAccount").addEventListener("click", playMenuSound);
+document.querySelector("#submitLogin").addEventListener("click", async () => {
   if (await signInFromProfileFields() && getProfile()) showScreen("mainMenuScreen");
 });
-document.querySelector("#verifyCode").addEventListener("click", playMenuSound);
+document.querySelector("#submitLogin").addEventListener("click", playMenuSound);
 document.querySelector("#deleteFirebaseAccount").addEventListener("click", () => {
   document.querySelector("#deleteAccountMessage").textContent = "";
   document.querySelector("#deleteAccountDialog").showModal();
@@ -4389,6 +4503,7 @@ function playMenuSound() {
   playSound("menu");
 }
 
+cleanupMockSeedData();
 runEconomyResetMigration();
 resetSleepyPandaMockAccount();
 setSettings(getSettings());

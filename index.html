@@ -78,26 +78,58 @@
             <strong>Achievements</strong>
             <div id="profileAchievements"></div>
           </div>
-          <label class="setting-row profile-field" id="profileUsernameField">
-            <span>Username</span>
-            <input id="profileUsername" maxlength="18" placeholder="honeybear">
-          </label>
-          <label class="setting-row profile-field" id="profileTagField">
+          <div class="auth-flow" id="authFlow">
+            <div class="auth-panel" id="authLandingPanel">
+              <button id="openLoginFlow" type="button">Log In</button>
+              <button id="openCreateAccountFlow" type="button">Create Account</button>
+            </div>
+            <div class="auth-panel" id="authCreateDetailsPanel" hidden>
+              <label class="setting-row profile-field" id="profileUsernameField">
+                <span>Username</span>
+                <input id="profileUsername" maxlength="18" placeholder="honeybear" autocomplete="username">
+              </label>
+              <label class="setting-row profile-field" id="profilePhoneSection">
+                <span>Email</span>
+                <input id="profilePhone" type="email" maxlength="80" placeholder="you@example.com" autocomplete="email">
+              </label>
+              <div class="auth-actions">
+                <button class="ghost-button" id="createDetailsBack" type="button">Back</button>
+                <button id="continueCreateAccount" type="button">Create Account</button>
+              </div>
+            </div>
+            <div class="auth-panel" id="authCreatePasswordPanel" hidden>
+              <label class="setting-row profile-field">
+                <span>Password</span>
+                <input id="createPassword" type="password" minlength="6" maxlength="64" placeholder="Password" autocomplete="new-password">
+              </label>
+              <label class="setting-row profile-field">
+                <span>Confirm Password</span>
+                <input id="confirmCreatePassword" type="password" minlength="6" maxlength="64" placeholder="Confirm password" autocomplete="new-password">
+              </label>
+              <div class="auth-actions">
+                <button class="ghost-button" id="createPasswordBack" type="button">Back</button>
+                <button id="submitCreateAccount" type="button">Create Account</button>
+              </div>
+            </div>
+            <div class="auth-panel" id="authLoginPanel" hidden>
+              <label class="setting-row profile-field">
+                <span>Email</span>
+                <input id="loginEmail" type="email" maxlength="80" placeholder="you@example.com" autocomplete="email">
+              </label>
+              <label class="setting-row profile-field">
+                <span>Password</span>
+                <input id="loginPassword" type="password" minlength="6" maxlength="64" placeholder="Password" autocomplete="current-password">
+              </label>
+              <div class="auth-actions">
+                <button class="ghost-button" id="loginBack" type="button">Back</button>
+                <button id="submitLogin" type="button">Log In</button>
+              </div>
+            </div>
+          </div>
+          <label class="setting-row profile-field" id="profileTagField" hidden>
             <span>Tag</span>
             <input id="profileTag" maxlength="4" placeholder="A7K2">
           </label>
-          <label class="setting-row profile-field" id="profilePhoneSection">
-            <span>Email</span>
-            <input id="profilePhone" type="email" maxlength="80" placeholder="you@example.com" autocomplete="email">
-          </label>
-          <label class="setting-row" id="verifyPhoneSection">
-            <span>Password</span>
-            <button id="sendVerification" type="button">Create Account</button>
-          </label>
-          <div class="verify-row" id="verifyRow">
-            <input id="verificationCode" type="password" minlength="6" maxlength="64" placeholder="Password" autocomplete="current-password">
-            <button id="verifyCode" type="button">Sign In</button>
-          </div>
           <div class="menu-actions">
             <button id="saveProfile" type="button">Save Profile</button>
             <button class="overwrite-action" id="deleteFirebaseAccount" type="button" hidden>Delete Account</button>

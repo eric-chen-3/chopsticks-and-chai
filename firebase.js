@@ -61,6 +61,7 @@ export async function signUpWithEmail(email, password, profile = {}) {
       ...nextProfile,
     });
   } catch (error) {
+    await deleteDoc(doc(db, "users", credential.user.uid)).catch(() => null);
     await deleteUser(credential.user).catch(() => null);
     throw error;
   }
@@ -88,16 +89,41 @@ export async function upsertUserProfile(uid, profile) {
     ...profile,
     updatedAt: serverTimestamp(),
   };
-  await setDoc(doc(db, "users", uid), privateProfile, { merge: true });
-  if (profile.username && profile.tag) {
-    await setDoc(doc(db, "publicProfiles", publicProfileId(profile.username, profile.tag)), {
-      uid,
-      username: profile.username,
-      tag: profile.tag,
-      selectedCharacterId: profile.selectedCharacterId || "honeyBear",
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-  }
+  await runTransaction(db, async (transaction) => {
+    let usernameHandleRef = null;
+    if (profile.username) {
+      usernameHandleRef = doc(db, "usernameHandles", publicProfileId(profile.username));
+      const usernameHandleSnapshot = await transaction.get(usernameHandleRef);
+      if (usernameHandleSnapshot.exists()) {
+        const existingUid = usernameHandleSnapshot.data().uid || "";
+        if (existingUid && existingUid !== uid) {
+          const error = new Error("Username is already taken.");
+          error.code = "app/username-taken";
+          throw error;
+        }
+      }
+      const publicRef = doc(db, "publicProfiles", publicProfileId(profile.username));
+      const publicSnapshot = await transaction.get(publicRef);
+      if (publicSnapshot.exists() && publicSnapshot.data().uid !== uid) {
+        const error = new Error("Username is already taken.");
+        error.code = "app/username-taken";
+        throw error;
+      }
+      transaction.set(publicRef, {
+        uid,
+        username: profile.username,
+        tag: profile.tag || "",
+        selectedCharacterId: profile.selectedCharacterId || "honeyBear",
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      transaction.set(usernameHandleRef, {
+        uid,
+        username: profile.username,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
+    transaction.set(doc(db, "users", uid), privateProfile, { merge: true });
+  });
 }
 
 export function updateUserPresence(uid, presence = {}) {
@@ -117,16 +143,42 @@ export async function updateUserProfileTransaction(uid, updater) {
     const current = snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : {};
     const updateResult = updater(current);
     const next = updateResult && updateResult.write ? updateResult.write : updateResult;
+    let publicRef = null;
+    let usernameHandleRef = null;
+    if (next.username) {
+      usernameHandleRef = doc(db, "usernameHandles", publicProfileId(next.username));
+      const usernameHandleSnapshot = await transaction.get(usernameHandleRef);
+      if (usernameHandleSnapshot.exists()) {
+        const existingUid = usernameHandleSnapshot.data().uid || "";
+        if (existingUid && existingUid !== uid) {
+          const error = new Error("Username is already taken.");
+          error.code = "app/username-taken";
+          throw error;
+        }
+      }
+      publicRef = doc(db, "publicProfiles", publicProfileId(next.username));
+      const publicSnapshot = await transaction.get(publicRef);
+      if (publicSnapshot.exists() && publicSnapshot.data().uid !== uid) {
+        const error = new Error("Username is already taken.");
+        error.code = "app/username-taken";
+        throw error;
+      }
+    }
     transaction.set(userRef, {
       ...sanitizeForFirestore(next),
       updatedAt: serverTimestamp(),
     }, { merge: true });
-    if (next.username && next.tag) {
-      transaction.set(doc(db, "publicProfiles", publicProfileId(next.username, next.tag)), {
+    if (publicRef) {
+      transaction.set(publicRef, {
         uid,
         username: next.username,
-        tag: next.tag,
+        tag: next.tag || "",
         selectedCharacterId: next.selectedCharacterId || "honeyBear",
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      transaction.set(usernameHandleRef, {
+        uid,
+        username: next.username,
         updatedAt: serverTimestamp(),
       }, { merge: true });
     }
@@ -134,13 +186,22 @@ export async function updateUserProfileTransaction(uid, updater) {
   });
 }
 
-export function publicProfileId(username, tag) {
-  return `${String(username).trim().toLowerCase()}_${String(tag).trim().toUpperCase()}`;
+export function publicProfileId(username) {
+  return String(username).trim().toLowerCase();
 }
 
 export async function findPublicProfile(username, tag) {
-  const snapshot = await getDoc(doc(db, "publicProfiles", publicProfileId(username, tag)));
-  return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+  const snapshot = await getDoc(doc(db, "publicProfiles", publicProfileId(username)));
+  if (!snapshot.exists()) return null;
+  const profile = { id: snapshot.id, ...snapshot.data() };
+  return tag && profile.tag && String(profile.tag).toUpperCase() !== String(tag).toUpperCase()
+    ? null
+    : profile;
+}
+
+export async function isUsernameTaken(username) {
+  const snapshot = await getDoc(doc(db, "usernameHandles", publicProfileId(username)));
+  return snapshot.exists();
 }
 
 export async function listFriends(uid) {
@@ -322,8 +383,9 @@ export async function deleteFirebaseAccount(currentUser, profile = {}) {
     ...lobbies.map((lobby) => deleteFirebaseLobby(lobby.id)),
   ]);
 
-  if (profile.username && profile.tag) {
-    await deleteDoc(doc(db, "publicProfiles", publicProfileId(profile.username, profile.tag)));
+  if (profile.username) {
+    await deleteDoc(doc(db, "publicProfiles", publicProfileId(profile.username)));
+    await deleteDoc(doc(db, "usernameHandles", publicProfileId(profile.username)));
   }
   await deleteDoc(doc(db, "users", uid));
   await deleteUser(currentUser);
