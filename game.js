@@ -5283,10 +5283,26 @@ function playMenuSound() {
   playSound("menu");
 }
 
+function installMobileZoomGuards() {
+  let lastTouchEndAt = 0;
+  const isEditableTarget = (target) => Boolean(target && target.closest && target.closest("input, textarea, select, [contenteditable='true']"));
+  document.addEventListener("touchend", (event) => {
+    const now = Date.now();
+    if (now - lastTouchEndAt < 360 && !isEditableTarget(event.target)) {
+      event.preventDefault();
+    }
+    lastTouchEndAt = now;
+  }, { passive: false });
+  document.addEventListener("gesturestart", (event) => {
+    if (!isEditableTarget(event.target)) event.preventDefault();
+  }, { passive: false });
+}
+
 if (devToolsEnabled()) {
   window.__runProgressionSmokeTest = runProgressionSmokeTest;
 }
 
+installMobileZoomGuards();
 cleanupMockSeedData();
 runEconomyResetMigration();
 resetSleepyPandaMockAccount();
