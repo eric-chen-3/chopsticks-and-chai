@@ -2950,6 +2950,36 @@ async function signInFromProfileFields() {
   }
 }
 
+function handleAuthFlowClick(event) {
+  const button = event.target.closest("button");
+  if (!button) return;
+  const authActions = {
+    openLoginFlow: () => setAuthFlowMode("login"),
+    openCreateAccountFlow: () => setAuthFlowMode("createDetails"),
+    createDetailsBack: () => setAuthFlowMode("landing"),
+    createPasswordBack: () => {
+      authFlowMode = "createDetails";
+      document.querySelector("#profileMessage").textContent = "Choose a username and enter your email.";
+      renderAuthFlowPanels();
+    },
+    loginBack: () => setAuthFlowMode("landing"),
+    continueCreateAccount: continueCreateAccountFlow,
+    submitCreateAccount: submitCreateAccountFlow,
+    submitLogin: async () => {
+      if (await signInFromProfileFields() && getProfile()) showScreen("mainMenuScreen");
+    },
+  };
+  const action = authActions[button.id];
+  if (!action) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  action();
+  playMenuSound();
+}
+
+document.addEventListener("click", handleAuthFlowClick, true);
+
 function authErrorMessage(error) {
   const code = error && error.code ? error.code : "";
   if (code === "auth/email-already-in-use") return "That email already has an account. Try signing in.";
@@ -4297,28 +4327,6 @@ document.querySelector("#saveProfile").addEventListener("click", async () => {
   if (await saveProfile() && getProfile()) showScreen(previousScreen);
 });
 document.querySelector("#saveProfile").addEventListener("click", playMenuSound);
-document.querySelector("#openLoginFlow").addEventListener("click", () => setAuthFlowMode("login"));
-document.querySelector("#openLoginFlow").addEventListener("click", playMenuSound);
-document.querySelector("#openCreateAccountFlow").addEventListener("click", () => setAuthFlowMode("createDetails"));
-document.querySelector("#openCreateAccountFlow").addEventListener("click", playMenuSound);
-document.querySelector("#createDetailsBack").addEventListener("click", () => setAuthFlowMode("landing"));
-document.querySelector("#createDetailsBack").addEventListener("click", playMenuSound);
-document.querySelector("#createPasswordBack").addEventListener("click", () => {
-  authFlowMode = "createDetails";
-  document.querySelector("#profileMessage").textContent = "Choose a username and enter your email.";
-  renderAuthFlowPanels();
-});
-document.querySelector("#createPasswordBack").addEventListener("click", playMenuSound);
-document.querySelector("#loginBack").addEventListener("click", () => setAuthFlowMode("landing"));
-document.querySelector("#loginBack").addEventListener("click", playMenuSound);
-document.querySelector("#continueCreateAccount").addEventListener("click", continueCreateAccountFlow);
-document.querySelector("#continueCreateAccount").addEventListener("click", playMenuSound);
-document.querySelector("#submitCreateAccount").addEventListener("click", submitCreateAccountFlow);
-document.querySelector("#submitCreateAccount").addEventListener("click", playMenuSound);
-document.querySelector("#submitLogin").addEventListener("click", async () => {
-  if (await signInFromProfileFields() && getProfile()) showScreen("mainMenuScreen");
-});
-document.querySelector("#submitLogin").addEventListener("click", playMenuSound);
 document.querySelector("#deleteFirebaseAccount").addEventListener("click", () => {
   document.querySelector("#deleteAccountMessage").textContent = "";
   document.querySelector("#deleteAccountDialog").showModal();
