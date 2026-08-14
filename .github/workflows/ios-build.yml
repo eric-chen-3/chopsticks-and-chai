@@ -54,6 +54,7 @@ jobs:
       IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
       IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
       KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-signing
+      IOS_BUILD_NUMBER: ${{ github.run_number }}
 
     steps:
       - name: Check out repository
@@ -131,6 +132,7 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             CODE_SIGN_IDENTITY="Apple Distribution" \
+            CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
             archive
 
       - name: Export signed IPA

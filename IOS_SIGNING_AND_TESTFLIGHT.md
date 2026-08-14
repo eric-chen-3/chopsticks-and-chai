@@ -117,6 +117,7 @@ The workflow will:
 - export a signed `.ipa`
 - upload the `.ipa` artifact to GitHub Actions
 - upload the `.ipa` to TestFlight
+- stamp the TestFlight build number from the GitHub Actions run number
 
 ## 9. App Store Connect: process and test
 
@@ -133,4 +134,4 @@ After upload succeeds:
 
 - Internal TestFlight does not require external beta review.
 - External testers require beta review.
-- You must increment build numbers for future uploads. The first build currently uses `CURRENT_PROJECT_VERSION = 1`.
+- TestFlight build numbers must always increase. The signed upload workflow sets `CURRENT_PROJECT_VERSION` from the GitHub Actions run number so each new manual run gets a higher build number automatically.
