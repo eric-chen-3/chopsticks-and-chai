@@ -2788,15 +2788,6 @@ async function saveProfile() {
     return false;
   }
 
-  try {
-    if (!firebaseUser) {
-      firebaseUser = await signUpWithEmail(email, password, username);
-    }
-  } catch (error) {
-    message.textContent = authErrorMessage(error);
-    return false;
-  }
-
   const nextProfile = profileWithEconomy(current || {}, {
     username,
     email,
@@ -2804,6 +2795,16 @@ async function saveProfile() {
     tag,
     verified: true,
   });
+  try {
+    if (!firebaseUser) {
+      firebaseUser = await signUpWithEmail(email, password, firebaseDocumentFromLocalProfile(nextProfile));
+    } else {
+      await upsertUserProfile(firebaseUser.uid, firebaseDocumentFromLocalProfile(nextProfile));
+    }
+  } catch (error) {
+    message.textContent = authErrorMessage(error);
+    return false;
+  }
   if (activeUsername && activeUsername !== username) {
     if (!renameAccount(activeUsername, username)) {
       message.textContent = "That username is unavailable.";

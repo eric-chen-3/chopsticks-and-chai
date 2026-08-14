@@ -49,15 +49,21 @@ export function subscribeToAuthState(callback) {
   return onAuthStateChanged(auth, callback);
 }
 
-export async function signUpWithEmail(email, password, username) {
+export async function signUpWithEmail(email, password, profile = {}) {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
-  if (username) {
-    await updateProfile(credential.user, { displayName: username });
+  const nextProfile = typeof profile === "string" ? { username: profile } : profile;
+  if (nextProfile.username) {
+    await updateProfile(credential.user, { displayName: nextProfile.username });
   }
-  await upsertUserProfile(credential.user.uid, {
-    email: credential.user.email,
-    username,
-  });
+  try {
+    await upsertUserProfile(credential.user.uid, {
+      email: credential.user.email,
+      ...nextProfile,
+    });
+  } catch (error) {
+    await deleteUser(credential.user).catch(() => null);
+    throw error;
+  }
   return credential.user;
 }
 
