@@ -50,6 +50,7 @@ const WIN_XP = 50;
 const LOSS_XP = 15;
 const WIN_COINS = 25;
 const FORFEIT_SECONDS = 30;
+const AUTH_TIMEOUT_MS = 15000;
 
 let game;
 let previousScreen = "mainMenuScreen";
@@ -2598,8 +2599,24 @@ function isValidUsernameInput(value) {
   return /^[a-z0-9_.]{1,18}$/.test(value.trim().toLowerCase());
 }
 
+function isValidEmailInput(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 function isValidTagInput(value) {
   return /^[a-zA-Z0-9]{4}$/.test(value.trim().replace(/^#/, ""));
+}
+
+function withTimeout(promise, label, timeoutMs = AUTH_TIMEOUT_MS) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      const error = new Error(`${label} timed out. Check your connection and try again.`);
+      error.code = "app/timeout";
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
 }
 
 function showInvalidInput(message) {
@@ -2798,12 +2815,17 @@ async function continueCreateAccountFlow() {
     message.textContent = "Username and email are required.";
     return false;
   }
+  if (!isValidEmailInput(email)) {
+    message.textContent = "Enter a valid email address.";
+    return false;
+  }
   if (!isValidUsernameInput(rawUsername)) {
     showInvalidInput("Usernames can use letters, numbers, underscores, and periods only. Max length: 18.");
     return false;
   }
+  message.textContent = "Checking username...";
   try {
-    if (await isUsernameTaken(username)) {
+    if (await withTimeout(isUsernameTaken(username), "Username check")) {
       message.textContent = "Username is already taken. Try a different username.";
       return false;
     }
@@ -2845,8 +2867,13 @@ async function submitCreateAccountFlow() {
     tag: pendingCreateAccount.tag,
     verified: true,
   });
+  message.textContent = "Creating account...";
   try {
-    firebaseUser = await signUpWithEmail(pendingCreateAccount.email, password, firebaseDocumentFromLocalProfile(nextProfile));
+    firebaseUser = await withTimeout(
+      signUpWithEmail(pendingCreateAccount.email, password, firebaseDocumentFromLocalProfile(nextProfile)),
+      "Account creation",
+      25000,
+    );
   } catch (error) {
     message.textContent = authErrorMessage(error);
     if ((error && error.code) === "app/username-taken") authFlowMode = "createDetails";
@@ -2940,12 +2967,19 @@ async function signInFromProfileFields() {
     message.textContent = "Email and password are required.";
     return false;
   }
+  if (!isValidEmailInput(email)) {
+    message.textContent = "Enter your email address to log in.";
+    return false;
+  }
+  message.textContent = "Logging in...";
   try {
-    firebaseUser = await signInWithEmail(email, password);
-    await loadFirebaseProfile(firebaseUser);
+    firebaseUser = await withTimeout(signInWithEmail(email, password), "Login", 20000);
+    await withTimeout(loadFirebaseProfile(firebaseUser), "Profile load", 20000);
     return true;
   } catch (error) {
-    message.textContent = "The email or password you entered is incorrect. Please try again.";
+    message.textContent = (error && error.code) === "app/timeout"
+      ? error.message
+      : "The email or password you entered is incorrect. Please try again.";
     return false;
   }
 }
@@ -2974,7 +3008,14 @@ function handleAuthFlowClick(event) {
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
-  action();
+  button.disabled = true;
+  Promise.resolve(action())
+    .catch((error) => {
+      document.querySelector("#profileMessage").textContent = authErrorMessage(error);
+    })
+    .finally(() => {
+      button.disabled = false;
+    });
   playMenuSound();
 }
 
@@ -2985,6 +3026,7 @@ function authErrorMessage(error) {
   if (code === "auth/email-already-in-use") return "That email already has an account. Try signing in.";
   if (code === "auth/invalid-email") return "Enter a valid email address.";
   if (code === "auth/weak-password") return "Password must be at least 6 characters.";
+  if (code === "app/timeout") return error.message;
   if (code === "app/username-taken") return "Username is already taken. Try a different username.";
   if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") return "Email or password is incorrect.";
   if (code === "auth/requires-recent-login") return "Please sign out, sign back in, and try deleting the account again.";

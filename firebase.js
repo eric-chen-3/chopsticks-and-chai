@@ -16,7 +16,7 @@ import {
   doc,
   getDoc,
   getDocs,
-  getFirestore,
+  initializeFirestore,
   limit,
   onSnapshot,
   orderBy,
@@ -39,7 +39,10 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+export const db = initializeFirestore(firebaseApp, {
+  experimentalForceLongPolling: true,
+  useFetchStreams: false,
+});
 
 export const analytics = isAnalyticsSupported()
   .then((supported) => (supported ? getAnalytics(firebaseApp) : null))
