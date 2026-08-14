@@ -981,6 +981,18 @@ button.save-action {
   font: inherit;
 }
 
+.auth-flow,
+.auth-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .form-message {
   min-height: 20px;
   color: var(--muted);
