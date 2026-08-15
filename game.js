@@ -47,17 +47,62 @@ const MOCK_SEED_CLEANUP_KEY = "chopstickDuel.mockSeedCleanup.v1";
 const MAX_SAVES = 3;
 const MAX_LOBBIES = 7;
 const WIN_XP = 50;
-const LOSS_XP = 15;
+const MATCH_LOSS_XP_RATE = 0.3;
+const AI_LOSS_XP = 5;
+const AI_WIN_XP = {
+  easy: 10,
+  medium: 50,
+  hard: 100,
+  veryHard: 1000,
+};
 const WIN_COINS = 25;
+const AI_WIN_COINS = {
+  easy: 2,
+  medium: 20,
+  hard: 50,
+  veryHard: 500,
+};
 const FORFEIT_SECONDS = 30;
 const AUTH_TIMEOUT_MS = 15000;
+const AI_PLAYER_INDEX = 1;
+
+const aiDifficultySettings = {
+  easy: {
+    label: "Easy",
+    attackMistakeRate: 0.4,
+    splitMistakeRate: 0.5,
+    depth: 2,
+    winningMoveMissRate: 0.15,
+  },
+  medium: {
+    label: "Medium",
+    attackMistakeRate: 0.25,
+    splitMistakeRate: 0.4,
+    depth: 4,
+    winningMoveMissRate: 0.06,
+  },
+  hard: {
+    label: "Hard",
+    attackMistakeRate: 0.1,
+    splitMistakeRate: 0.2,
+    depth: 5,
+    winningMoveMissRate: 0.01,
+  },
+  veryHard: {
+    label: "Very Hard",
+    attackMistakeRate: 0,
+    splitMistakeRate: 0,
+    depth: 10,
+    winningMoveMissRate: 0,
+  },
+};
 
 const achievements = [
   { id: "inviteSent", title: "Invite Sent", description: "Send your first game invite.", difficulty: "Easy", exp: 25, coins: 25 },
   { id: "fashionFan", title: "Fashion Fan", description: "Change your avatar.", difficulty: "Easy", exp: 25, coins: 25 },
   { id: "firstWin", title: "First Win", description: "Win your first match.", difficulty: "Easy", exp: 40, coins: 40 },
   { id: "socialStarter", title: "Social Starter", description: "Add your first friend.", difficulty: "Easy", exp: 40, coins: 40 },
-  { id: "friendlyRival", title: "Friendly Rival", description: "Play a separate devices match.", difficulty: "Easy", exp: 50, coins: 50 },
+  { id: "friendlyRival", title: "Friendly Rival", description: "Play a Play vs Friends match.", difficulty: "Easy", exp: 50, coins: 50 },
   { id: "cleanVictory", title: "Clean Victory", description: "Win without losing a hand.", difficulty: "Medium", exp: 80, coins: 75 },
   { id: "closeCall", title: "Close Call", description: "Win with only one live hand remaining.", difficulty: "Medium", exp: 80, coins: 75 },
   { id: "hotStreak", title: "Hot Streak", description: "Win 3 games in a row.", difficulty: "Medium", exp: 100, coins: 90 },
@@ -129,6 +174,8 @@ let dailyCheckInUsername = "";
 let firebaseLobbyMessages = {};
 let authFlowMode = "landing";
 let pendingCreateAccount = null;
+let pendingAiDifficulty = "easy";
+let aiMoveTimer = null;
 
 function devToolsEnabled() {
   try {
@@ -195,6 +242,12 @@ const characters = [
   { id: "babyDragon", name: "Baby Dragon", tier: "Rare", className: "dragon" },
   { id: "cloudBear", name: "Cloud Bear", tier: "Rare", className: "cloud" },
   { id: "starBunny", name: "Star Bunny", tier: "Rare", className: "star" },
+  { id: "goldenDragon", name: "Golden Dragon", tier: "Premium", className: "golden-dragon premium-avatar" },
+  { id: "jadeTiger", name: "Jade Tiger", tier: "Premium", className: "jade-tiger premium-avatar" },
+  { id: "sakuraKitsune", name: "Sakura Kitsune", tier: "Premium", className: "sakura-kitsune premium-avatar" },
+  { id: "moonRabbit", name: "Moon Rabbit", tier: "Deluxe", className: "moon-rabbit premium-avatar deluxe-avatar" },
+  { id: "crystalAxolotl", name: "Crystal Axolotl", tier: "Deluxe", className: "crystal-axolotl premium-avatar deluxe-avatar" },
+  { id: "imperialPhoenix", name: "Imperial Phoenix", tier: "Legendary", className: "imperial-phoenix premium-avatar deluxe-avatar" },
 ];
 
 const powerCards = {
@@ -246,12 +299,15 @@ function createGame() {
     invitedFriendId: pendingInviteFriendId,
     lobbyId: pendingSubmode === "Separate Devices" ? activeInviteId() : null,
     playerCharacters: ["honeyBear", "mochiBunny"],
+    playerWinStreaks: [0, 0],
+    aiDifficulty: pendingSubmode === "Play vs AI" ? pendingAiDifficulty : null,
     saveId: null,
     rewardSummary: null,
   };
 }
 
 function startNewGame() {
+  clearAiMoveTimer();
   game = createGame();
   if (game.submode === "Separate Devices" && game.lobbyId) {
     updateLobby(game.lobbyId, (lobby) => ({
@@ -267,6 +323,7 @@ function startNewGame() {
   }
   applyGameCharacters();
   applyProfileNames();
+  applyGameWinStreaks();
   if (isPowerMode()) {
     game.players.forEach((player) => drawCards(player, 3));
     startPowerTurn(currentPlayer(), false);
@@ -297,10 +354,10 @@ function openStartupNotice() {
   const intro = document.querySelector("#startupNoticeIntro");
   const list = document.querySelector("#startupNoticeList");
   const footnote = document.querySelector("#startupNoticeFootnote");
-  title.textContent = pendingMode === "Power Up Mode" ? "Power Up Mode" : "Pass and Play";
+  title.textContent = pendingMode === "Power Up Mode" ? "Power Up Mode" : displaySubmodeName(pendingSubmode);
   intro.textContent = pendingMode === "Power Up Mode"
     ? "Power Up Mode changes the base rules:"
-    : "Pass and Play allows you to play using one shared device. Pass the phone to the other player after the end of your turn.";
+    : "Play on Same Device lets two players use one shared device. Pass the phone to the other player after the end of your turn.";
   list.replaceChildren();
   if (pendingMode === "Power Up Mode") {
     [
@@ -315,7 +372,7 @@ function openStartupNotice() {
     });
   }
   footnote.innerHTML = pendingSubmode === "Pass and Play"
-    ? `Notice: No experience or ${coinIconMarkup()} are awarded in Pass and Play mode.`
+    ? `Notice: No experience or ${coinIconMarkup()} are awarded in Play on Same Device.`
     : "";
   document.querySelector("#startupNoticeDialog").showModal();
 }
@@ -331,6 +388,10 @@ function applyProfileNames() {
     game.players[0].name = profile.username;
   }
   if (friend && pendingSubmode === "Separate Devices" && !invite) game.players[1].name = friend.username;
+  if (pendingSubmode === "Play vs AI") {
+    const difficulty = aiDifficultySettings[pendingAiDifficulty] || aiDifficultySettings.easy;
+    game.players[1].name = `${difficulty.label} Bot`;
+  }
   if (pendingSubmode === "Pass and Play") {
     const opponentCharacter = characters.find((character) => character.id === game.playerCharacters[1]) || characters[1];
     game.players[1].name = opponentCharacter.name;
@@ -352,6 +413,11 @@ function applyGameCharacters() {
     game.playerCharacters[1] = friend ? getCharacterForUsername(friend.username).id : game.playerCharacters[1];
   }
   if (profile && pendingSubmode !== "Separate Devices") game.playerCharacters[0] = getCharacterForUsername(profile.username).id;
+}
+
+function applyGameWinStreaks() {
+  if (!game) return;
+  game.playerWinStreaks = game.players.map((player) => activeModeWinStreak(getProfile(player.name), game));
 }
 
 function addPowerState(player) {
@@ -377,6 +443,20 @@ function isPowerMode() {
   return game && game.mode === "Power Up Mode";
 }
 
+function isAiMode() {
+  return game && game.mode === "Standard Mode" && game.submode === "Play vs AI";
+}
+
+function isAiTurn() {
+  return isAiMode() && game.current === AI_PLAYER_INDEX && !game.over;
+}
+
+function displaySubmodeName(submode) {
+  if (submode === "Pass and Play") return "Play on Same Device";
+  if (submode === "Separate Devices") return "Play vs Friends";
+  return submode || "Play on Same Device";
+}
+
 function deathThreshold() {
   return isPowerMode() ? 10 : 5;
 }
@@ -386,7 +466,7 @@ function maxLiveChopsticks() {
 }
 
 function showScreen(screenId) {
-  ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "gameScreen"].forEach((id) => {
+  ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "aiDifficultyScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"].forEach((id) => {
     document.querySelector(`#${id}`).hidden = id !== screenId;
   });
   document.querySelector("#gameMenuDropdown").hidden = true;
@@ -403,6 +483,7 @@ function showScreen(screenId) {
   if (screenId === "achievementsScreen") renderAchievements();
   if (screenId === "questsScreen") renderQuests();
   if (screenId === "waitingLobbyScreen") renderWaitingLobby();
+  if (screenId === "aiDifficultyScreen") renderAiDifficultyOptions();
   if (screenId === "storeScreen") {
     pendingCharacterId = getSelectedCharacter().id;
     document.querySelector("#storeMessage").textContent = "";
@@ -445,6 +526,7 @@ function activePlayerIndex() {
 
 function canActiveAccountAct() {
   if (!game || game.over) return false;
+  if (isAiTurn()) return false;
   if (game.submode !== "Separate Devices") return true;
   return activePlayerIndex() === game.current;
 }
@@ -651,18 +733,206 @@ function validSplit(player, left, right) {
     return false;
   }
   if (left + right !== player.hands[0] + player.hands[1]) return false;
-  if (left === player.hands[0] && right === player.hands[1]) return false;
+  if (isSameOrMirroredSplit(player.hands, left, right)) return false;
   if (isPowerMode() && player.hands[0] === 0 && left > 0) return false;
   if (isPowerMode() && player.hands[1] === 0 && right > 0) return false;
   return left + right > 0;
+}
+
+function isSameOrMirroredSplit(hands, left, right) {
+  return (left === hands[0] && right === hands[1]) || (left === hands[1] && right === hands[0]);
+}
+
+function clearAiMoveTimer() {
+  if (!aiMoveTimer) return;
+  window.clearTimeout(aiMoveTimer);
+  aiMoveTimer = null;
+}
+
+function scheduleAiMove() {
+  if (!isAiTurn() || currentPlayer().actionUsed || aiMoveTimer) return;
+  aiMoveTimer = window.setTimeout(() => {
+    aiMoveTimer = null;
+    performAiTurn();
+  }, 700);
+}
+
+function performAiTurn() {
+  if (!isAiTurn() || currentPlayer().actionUsed || isPowerMode()) return;
+  const move = chooseAiMove(game.aiDifficulty || pendingAiDifficulty);
+  if (!move) {
+    addLog(`${currentPlayer().name} cannot find a legal move.`);
+    endTurn({ force: true });
+    return;
+  }
+  if (move.type === "attack") {
+    attack(move.attackerHand, move.targetHand);
+  } else {
+    applySplit(move.left, move.right);
+  }
+  if (!game || game.over) return;
+  aiMoveTimer = window.setTimeout(() => {
+    aiMoveTimer = null;
+    if (isAiTurn() && currentPlayer().actionUsed) endTurn({ force: true });
+  }, 650);
+}
+
+function chooseAiMove(difficultyId) {
+  const settings = aiDifficultySettings[difficultyId] || aiDifficultySettings.easy;
+  const state = stateFromGame();
+  const moves = legalStandardMoves(state);
+  if (!moves.length) return null;
+  const scored = scoreAiMoves(state, moves, settings.depth);
+  const winningMoves = scored.filter((entry) => entry.winsNow);
+  if (winningMoves.length && Math.random() >= settings.winningMoveMissRate) return winningMoves[0].move;
+
+  const attackMoves = scored.filter((entry) => entry.move.type === "attack");
+  if (attackMoves.length && Math.random() < settings.attackMistakeRate) {
+    return chooseBelievableMistake(attackMoves).move;
+  }
+
+  const splitMoves = scored.filter((entry) => entry.move.type === "split");
+  if (splitMoves.length && Math.random() < settings.splitMistakeRate) {
+    return chooseBelievableMistake(splitMoves).move;
+  }
+
+  return scored[0].move;
+}
+
+function stateFromGame() {
+  return {
+    current: game.current,
+    players: game.players.map((player) => ({ hands: [...player.hands] })),
+  };
+}
+
+function legalStandardMoves(state) {
+  const player = state.players[state.current];
+  const opponent = state.players[1 - state.current];
+  const moves = [];
+  player.hands.forEach((value, attackerHand) => {
+    if (value <= 0) return;
+    opponent.hands.forEach((targetValue, targetHand) => {
+      if (targetValue > 0) moves.push({ type: "attack", attackerHand, targetHand });
+    });
+  });
+  standardSplitChoices(player.hands).forEach(([left, right]) => {
+    moves.push({ type: "split", left, right });
+  });
+  return moves;
+}
+
+function standardSplitChoices(hands) {
+  const choices = [];
+  const total = hands[0] + hands[1];
+  for (let left = 0; left <= 4; left += 1) {
+    const right = total - left;
+    if (right < 0 || right > 4) continue;
+    if (isSameOrMirroredSplit(hands, left, right)) continue;
+    if (left + right > 0) choices.push([left, right]);
+  }
+  return choices;
+}
+
+function scoreAiMoves(state, moves, depth) {
+  return moves
+    .map((move) => {
+      const next = applyStandardMoveToState(state, move);
+      return {
+        move,
+        winsNow: standardWinner(next) === state.current,
+        score: minimaxStandard(next, depth - 1, -Infinity, Infinity, AI_PLAYER_INDEX, new Map()),
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
+function chooseBelievableMistake(scoredMoves) {
+  if (scoredMoves.length === 1) return scoredMoves[0];
+  const nonWinning = scoredMoves.filter((entry) => !entry.winsNow);
+  const pool = (nonWinning.length ? nonWinning : scoredMoves).slice(1);
+  if (!pool.length) return scoredMoves[0];
+  const topHalf = pool.slice(0, Math.max(1, Math.ceil(pool.length / 2)));
+  return topHalf[Math.floor(Math.random() * topHalf.length)];
+}
+
+function applyStandardMoveToState(state, move) {
+  const next = {
+    current: state.current,
+    players: state.players.map((player) => ({ hands: [...player.hands] })),
+  };
+  const player = next.players[next.current];
+  const opponent = next.players[1 - next.current];
+  if (move.type === "attack") {
+    const result = opponent.hands[move.targetHand] + player.hands[move.attackerHand];
+    opponent.hands[move.targetHand] = result >= 5 ? 0 : result;
+  } else {
+    player.hands = [move.left, move.right];
+  }
+  if (standardWinner(next) === null) next.current = 1 - next.current;
+  return next;
+}
+
+function standardWinner(state) {
+  if (state.players[0].hands.every((value) => value === 0)) return 1;
+  if (state.players[1].hands.every((value) => value === 0)) return 0;
+  return null;
+}
+
+function minimaxStandard(state, depth, alpha, beta, aiIndex, memo) {
+  const winner = standardWinner(state);
+  if (winner !== null) return winner === aiIndex ? 10000 + depth : -10000 - depth;
+  if (depth <= 0) return evaluateStandardState(state, aiIndex);
+
+  const key = `${state.current}|${state.players[0].hands.join("-")}|${state.players[1].hands.join("-")}|${depth}`;
+  if (memo.has(key)) return memo.get(key);
+
+  const moves = legalStandardMoves(state);
+  if (!moves.length) return evaluateStandardState(state, aiIndex);
+
+  const maximizing = state.current === aiIndex;
+  let best = maximizing ? -Infinity : Infinity;
+  for (const move of moves) {
+    const score = minimaxStandard(applyStandardMoveToState(state, move), depth - 1, alpha, beta, aiIndex, memo);
+    if (maximizing) {
+      best = Math.max(best, score);
+      alpha = Math.max(alpha, best);
+    } else {
+      best = Math.min(best, score);
+      beta = Math.min(beta, best);
+    }
+    if (beta <= alpha) break;
+  }
+  memo.set(key, best);
+  return best;
+}
+
+function evaluateStandardState(state, aiIndex) {
+  const ai = state.players[aiIndex].hands;
+  const human = state.players[1 - aiIndex].hands;
+  const aiLive = ai.filter((value) => value > 0).length;
+  const humanLive = human.filter((value) => value > 0).length;
+  const aiTotal = ai.reduce((sum, value) => sum + value, 0);
+  const humanTotal = human.reduce((sum, value) => sum + value, 0);
+  const attackPressure = legalStandardMoves({ current: aiIndex, players: state.players }).filter((move) => {
+    if (move.type !== "attack") return false;
+    const result = human[move.targetHand] + ai[move.attackerHand];
+    return result >= 5;
+  }).length;
+  const danger = legalStandardMoves({ current: 1 - aiIndex, players: state.players }).filter((move) => {
+    if (move.type !== "attack") return false;
+    const result = ai[move.targetHand] + human[move.attackerHand];
+    return result >= 5;
+  }).length;
+  return ((aiLive - humanLive) * 90) + ((aiTotal - humanTotal) * 12) + (attackPressure * 28) - (danger * 34);
 }
 
 function isOneOne(player) {
   return player.hands[0] === 1 && player.hands[1] === 1;
 }
 
-function endTurn() {
-  if (!game || game.over || !canActiveAccountAct()) return;
+function endTurn(options = {}) {
+  if (!game || game.over || (!options.force && !canActiveAccountAct())) return;
 
   currentPlayer().actionUsed = false;
   if (isPowerMode()) {
@@ -716,7 +986,7 @@ async function showGameOver(winnerIndex, loserIndex) {
     ? `${escapeHtml(winner.name)} knocked both of your chopsticks down.`
     : `${escapeHtml(loser.name)}'s chopsticks are both down.`}${streakText ? ` ${escapeHtml(streakText)}` : ""}`;
   renderRewardPanel(viewedReward);
-  document.querySelector("#returnToLobby").hidden = game.submode === "Pass and Play";
+  document.querySelector("#returnToLobby").hidden = game.submode !== "Separate Devices";
   playEndGameSounds(showLose ? "lose" : "win");
   dialog.showModal();
   animateRewardPanel(viewedReward);
@@ -732,7 +1002,7 @@ function render() {
   if (!game) return;
   const player = currentPlayer();
   document.querySelector("#gameModeLabel").textContent = game.mode;
-  document.querySelector(".turn-card small").textContent = game.submode;
+  document.querySelector(".turn-card small").textContent = displaySubmodeName(game.submode);
   document.querySelector("#turnLabel").textContent = `${player.name}'s turn`;
   document.querySelector("#phaseLabel").textContent = !canActiveAccountAct() ? "Waiting" : player.actionUsed ? "End turn" : "Tap a fan";
   const hintBox = document.querySelector(".play-orb");
@@ -740,7 +1010,10 @@ function render() {
   hintBox.hidden = !showHints;
   document.querySelector("#actionHint").textContent = showHints ? actionHint() : "";
   document.querySelector(".center-panel").classList.toggle("hints-off", !showHints);
-  document.querySelector("#endTurn").disabled = game.over || !player.actionUsed || !canActiveAccountAct();
+  const endTurnButton = document.querySelector("#endTurn");
+  const canAct = canActiveAccountAct();
+  endTurnButton.textContent = !game.over && canAct && !player.actionUsed ? "Select your action" : "End Turn";
+  endTurnButton.disabled = game.over || !player.actionUsed || !canAct;
 
   renderPlayer(0, document.querySelector("#player1Zone"), document.querySelector("#p1Hands"), document.querySelector("#p1Status"));
   renderPlayer(1, document.querySelector("#player2Zone"), document.querySelector("#p2Hands"), document.querySelector("#p2Status"));
@@ -748,10 +1021,12 @@ function render() {
   renderLog();
   updateForfeitTimer();
   syncActiveGameStateSoon();
+  scheduleAiMove();
 }
 
 function actionHint() {
   if (game.over) return "Game over.";
+  if (isAiTurn()) return `${currentPlayer().name} is thinking.`;
   if (!canActiveAccountAct()) return "Waiting for the other player.";
   if (currentPlayer().actionUsed) return "Pass the device and end your turn.";
   if (!game.selected) return "Tap one of your chopstick fans.";
@@ -760,11 +1035,11 @@ function actionHint() {
 
 function renderPlayer(index, zone, handsEl, statusEl) {
   const player = game.players[index];
-  const fixedSeat = game.submode === "Separate Devices";
+  const fixedSeat = game.submode === "Separate Devices" || isAiMode();
   const isCurrent = index === game.current;
   const activeUser = getActiveUsername();
   const activeIndex = game.players.findIndex((candidate) => candidate.name === activeUser);
-  const bottomPlayerIndex = fixedSeat && activeIndex !== -1 ? activeIndex : game.localPlayer;
+  const bottomPlayerIndex = isAiMode() ? 0 : fixedSeat && activeIndex !== -1 ? activeIndex : game.localPlayer;
   const isLocalPlayer = fixedSeat && index === bottomPlayerIndex;
   zone.classList.toggle("current-turn", isCurrent);
   zone.dataset.seat = fixedSeat ? (isLocalPlayer ? "current" : "opponent") : (isCurrent ? "current" : "opponent");
@@ -772,11 +1047,18 @@ function renderPlayer(index, zone, handsEl, statusEl) {
   const isHost = game.submode === "Separate Devices" && game.players[0].name === player.name;
   const eyebrow = zone.querySelector(".player-header .eyebrow");
   const title = zone.querySelector("h2");
+  const playerWinStreak = Array.isArray(game.playerWinStreaks)
+    ? Math.max(0, Math.floor(game.playerWinStreaks[index] || 0))
+    : activeModeWinStreak(getProfile(player.name), game);
+  const streakBadge = playerWinStreak > 0
+    ? `<span class="battle-streak-badge" aria-label="${playerWinStreak} win streak">🔥 ${playerWinStreak}</span>`
+    : "";
   eyebrow.innerHTML = `${isHost ? '<span class="host-crown" aria-label="Host"></span>' : ""}${player.name}`;
   title.innerHTML = `
     <button class="battle-profile-button" type="button">
       ${characterMarkup(getPlayerCharacter(index), "battle-avatar")}
       <span>${player.name}</span>
+      ${streakBadge}
     </button>
   `;
   title.querySelector(".battle-profile-button").addEventListener("click", () => openPublicProfile(player.name));
@@ -1004,8 +1286,7 @@ function playSound(type) {
   if (context.state === "suspended") context.resume();
 
   if (type === "attack") {
-    playTone(context, 920, 0, 0.05, volume * 0.18, "triangle");
-    playTone(context, 1320, 0.055, 0.07, volume * 0.12, "sine");
+    playWoodClack(context, volume);
     return;
   }
 
@@ -1107,6 +1388,53 @@ function playTone(context, frequency, delay, duration, volume, type) {
   gain.connect(context.destination);
   oscillator.start(start);
   oscillator.stop(end + 0.02);
+}
+
+function playWoodClack(context, volume) {
+  const start = context.currentTime;
+  const sampleRate = context.sampleRate;
+  const duration = 0.09;
+  const buffer = context.createBuffer(1, Math.floor(sampleRate * duration), sampleRate);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < samples.length; i += 1) {
+    const fade = 1 - (i / samples.length);
+    samples[i] = (Math.random() * 2 - 1) * fade * fade;
+  }
+
+  const noise = context.createBufferSource();
+  const bandpass = context.createBiquadFilter();
+  const lowpass = context.createBiquadFilter();
+  const noiseGain = context.createGain();
+  const knock = context.createOscillator();
+  const knockGain = context.createGain();
+
+  noise.buffer = buffer;
+  bandpass.type = "bandpass";
+  bandpass.frequency.setValueAtTime(1450, start);
+  bandpass.Q.setValueAtTime(1.8, start);
+  lowpass.type = "lowpass";
+  lowpass.frequency.setValueAtTime(2600, start);
+
+  noiseGain.gain.setValueAtTime(Math.max(0.0001, volume * 0.2), start);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+  knock.type = "triangle";
+  knock.frequency.setValueAtTime(310, start);
+  knock.frequency.exponentialRampToValueAtTime(190, start + 0.075);
+  knockGain.gain.setValueAtTime(Math.max(0.0001, volume * 0.12), start);
+  knockGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.08);
+
+  noise.connect(bandpass);
+  bandpass.connect(lowpass);
+  lowpass.connect(noiseGain);
+  noiseGain.connect(context.destination);
+  knock.connect(knockGain);
+  knockGain.connect(context.destination);
+
+  noise.start(start);
+  noise.stop(start + duration);
+  knock.start(start);
+  knock.stop(start + 0.09);
 }
 
 function playVoice(context, options) {
@@ -1268,13 +1596,14 @@ function defaultSaveName(index) {
 }
 
 function requestReturnToMenu() {
+  clearAiMoveTimer();
   document.querySelector("#gameMenuDropdown").hidden = true;
   if (!game || game.over) {
     game = null;
     showScreen("mainMenuScreen");
     return;
   }
-  if (game.submode !== "Pass and Play") {
+  if (game.submode === "Separate Devices") {
     document.querySelector("#savePromptDialog p").textContent = "Returning to the menu will start a 30 second return timer. If it reaches 0 while it is your turn, it counts as a forfeit loss.";
     document.querySelector("#savePromptDialog").showModal();
     return;
@@ -1285,6 +1614,7 @@ function requestReturnToMenu() {
 }
 
 function confirmReturnToMenu() {
+  clearAiMoveTimer();
   if (game && game.submode === "Separate Devices" && !game.over) {
     markGamePlayerLeft(getActiveUsername());
   } else {
@@ -1360,7 +1690,7 @@ function renderSaveList() {
     row.innerHTML = `
       <div class="save-info">
         <strong>${save.name}</strong>
-        <span>${save.game && save.game.mode ? save.game.mode : "Standard Mode"} | ${save.game && save.game.submode ? save.game.submode : "Pass and Play"}</span>
+        <span>${save.game && save.game.mode ? save.game.mode : "Standard Mode"} | ${displaySubmodeName(save.game && save.game.submode ? save.game.submode : "Pass and Play")}</span>
         <span>${formatDate(save.savedAt)}</span>
       </div>
       <div class="save-actions">
@@ -1518,7 +1848,8 @@ function escapeHtml(value) {
 }
 
 function levelRequirement(level) {
-  return Math.max(1, level) * 100;
+  const safeLevel = Math.max(1, Math.floor(level));
+  return Math.max(100, Math.round((100 * (1.09 ** (safeLevel - 1))) / 10) * 10);
 }
 
 function defaultEconomy(overrides = {}) {
@@ -1527,10 +1858,90 @@ function defaultEconomy(overrides = {}) {
     experience: 0,
     coins: 0,
     winStreak: 0,
+    modeWinStreaks: defaultModeWinStreaks(),
     totalWins: 0,
     totalLosses: 0,
     ...overrides,
   };
+}
+
+const modeWinStreakLabels = {
+  standardAiEasy: { label: "Standard / Play vs AI Easy", shortLabel: "SAI-E" },
+  standardAiMedium: { label: "Standard / Play vs AI Medium", shortLabel: "SAI-M" },
+  standardAiHard: { label: "Standard / Play vs AI Hard", shortLabel: "SAI-H" },
+  standardAiVeryHard: { label: "Standard / Play vs AI Very Hard", shortLabel: "SAI-VH" },
+  standardFriends: { label: "Standard / Play vs Friends", shortLabel: "SFR" },
+  powerAiEasy: { label: "Power Up / Play vs AI Easy", shortLabel: "PAI-E" },
+  powerAiMedium: { label: "Power Up / Play vs AI Medium", shortLabel: "PAI-M" },
+  powerAiHard: { label: "Power Up / Play vs AI Hard", shortLabel: "PAI-H" },
+  powerAiVeryHard: { label: "Power Up / Play vs AI Very Hard", shortLabel: "PAI-VH" },
+  powerFriends: { label: "Power Up / Play vs Friends", shortLabel: "PFR" },
+};
+
+function defaultModeWinStreaks(overrides = {}) {
+  return {
+    standardAiEasy: 0,
+    standardAiMedium: 0,
+    standardAiHard: 0,
+    standardAiVeryHard: 0,
+    standardFriends: 0,
+    powerAiEasy: 0,
+    powerAiMedium: 0,
+    powerAiHard: 0,
+    powerAiVeryHard: 0,
+    powerFriends: 0,
+    ...overrides,
+  };
+}
+
+function normalizeModeWinStreaks(value = {}) {
+  const streaks = value && typeof value === "object" ? value : {};
+  const normalized = defaultModeWinStreaks(Object.fromEntries(
+    Object.keys(modeWinStreakLabels).map((key) => [
+      key,
+      Number.isFinite(streaks[key]) ? Math.max(0, Math.floor(streaks[key])) : 0,
+    ]),
+  ));
+  if (Number.isFinite(streaks.standardAi) && normalized.standardAiEasy === 0) {
+    normalized.standardAiEasy = Math.max(0, Math.floor(streaks.standardAi));
+  }
+  if (Number.isFinite(streaks.powerAi) && normalized.powerAiEasy === 0) {
+    normalized.powerAiEasy = Math.max(0, Math.floor(streaks.powerAi));
+  }
+  return normalized;
+}
+
+function maxModeWinStreak(streaks = {}) {
+  return Math.max(0, ...Object.values(normalizeModeWinStreaks(streaks)));
+}
+
+function modeWinStreakKey(event = {}) {
+  if (!event || event.submode === "Pass and Play") return "";
+  const modePrefix = event.mode === "Power Up Mode" ? "power" : "standard";
+  if (event.submode === "Play vs AI") {
+    const difficultySuffixes = {
+      easy: "Easy",
+      medium: "Medium",
+      hard: "Hard",
+      veryHard: "VeryHard",
+    };
+    return `${modePrefix}Ai${difficultySuffixes[event.aiDifficulty] || "Easy"}`;
+  }
+  if (event.submode === "Separate Devices") return `${modePrefix}Friends`;
+  return "";
+}
+
+function activeModeWinStreak(profile, event = {}) {
+  const key = modeWinStreakKey(event);
+  if (!key) return 0;
+  return normalizeModeWinStreaks(profileWithEconomy(profile || {}).modeWinStreaks)[key] || 0;
+}
+
+function activeWinStreakSummaries(streaks = {}) {
+  const normalized = normalizeModeWinStreaks(streaks);
+  return Object.entries(modeWinStreakLabels)
+    .map(([key, meta]) => ({ key, ...meta, streak: normalized[key] || 0 }))
+    .filter((item) => item.streak > 0);
 }
 
 function defaultAchievementStats(overrides = {}) {
@@ -1581,11 +1992,14 @@ function defaultQuestState(overrides = {}) {
 }
 
 function normalizeEconomy(profile = {}) {
+  const modeWinStreaks = normalizeModeWinStreaks(profile.modeWinStreaks);
+  const legacyStreak = Number.isFinite(profile.winStreak) ? Math.max(0, Math.floor(profile.winStreak)) : 0;
   return defaultEconomy({
     level: Number.isFinite(profile.level) ? Math.max(1, Math.floor(profile.level)) : 1,
     experience: Number.isFinite(profile.experience) ? Math.max(0, Math.floor(profile.experience)) : 0,
     coins: Number.isFinite(profile.coins) ? Math.max(0, Math.floor(profile.coins)) : 0,
-    winStreak: Number.isFinite(profile.winStreak) ? Math.max(0, Math.floor(profile.winStreak)) : 0,
+    winStreak: Math.max(legacyStreak, maxModeWinStreak(modeWinStreaks)),
+    modeWinStreaks,
     totalWins: Number.isFinite(profile.totalWins) ? Math.max(0, Math.floor(profile.totalWins)) : 0,
     totalLosses: Number.isFinite(profile.totalLosses) ? Math.max(0, Math.floor(profile.totalLosses)) : 0,
   });
@@ -1645,8 +2059,14 @@ function normalizeQuestState(profile = {}) {
 
 function profileWithEconomy(profile, overrides = {}) {
   const merged = { ...profile, ...defaultEconomy(normalizeEconomy(profile)), ...overrides };
+  const modeWinStreaks = normalizeModeWinStreaks(merged.modeWinStreaks);
   return {
     ...merged,
+    winStreak: Math.max(
+      Number.isFinite(merged.winStreak) ? Math.max(0, Math.floor(merged.winStreak)) : 0,
+      maxModeWinStreak(modeWinStreaks),
+    ),
+    modeWinStreaks,
     achievements: normalizeAchievements(merged),
     achievementStats: normalizeAchievementStats(merged),
     questState: normalizeQuestState(merged),
@@ -1665,11 +2085,70 @@ function addExperience(profile, amount) {
 
 function streakBonusRate(streak) {
   if (streak < 3) return 0;
-  return Math.min(0.5, 0.2 + ((streak - 3) * 0.1));
+  if (streak === 3) return 0.2;
+  if (streak === 4) return 0.3;
+  if (streak === 5) return 0.5;
+  return 0.7;
 }
 
 function applyRewardToProfile(username, didWin) {
   return applyMatchRewardToProfile(username, didWin, currentMatchAchievementEvent(username, didWin));
+}
+
+function matchWinCoins(event = {}) {
+  if (event.submode === "Play vs AI") return AI_WIN_COINS[event.aiDifficulty] ?? WIN_COINS;
+  return WIN_COINS;
+}
+
+function levelGapXpMultiplier(playerLevel, opponentLevel) {
+  const gap = Math.abs(Math.max(1, playerLevel) - Math.max(1, opponentLevel));
+  return Math.max(0.25, 1 - (gap * 0.05));
+}
+
+function matchWinXp(event = {}, profile = {}) {
+  if (event.submode === "Play vs AI") return AI_WIN_XP[event.aiDifficulty] ?? WIN_XP;
+  if (event.submode === "Separate Devices") {
+    return Math.round(WIN_XP * levelGapXpMultiplier(profile.level || 1, event.opponentLevel || 1));
+  }
+  return WIN_XP;
+}
+
+function matchLossXp(event = {}, profile = {}) {
+  if (event.submode === "Play vs AI") return AI_LOSS_XP;
+  if (event.submode === "Separate Devices") {
+    return Math.round(WIN_XP * MATCH_LOSS_XP_RATE * levelGapXpMultiplier(profile.level || 1, event.opponentLevel || 1));
+  }
+  return Math.round(WIN_XP * MATCH_LOSS_XP_RATE);
+}
+
+function matchBaseXp(event = {}, profile = {}, didWin = false) {
+  return didWin ? matchWinXp(event, profile) : matchLossXp(event, profile);
+}
+
+function countsForAchievements(event = {}) {
+  return !(event.submode === "Play vs AI" && event.aiDifficulty === "easy");
+}
+
+function nextWinStreakState(current, didWin, event = {}) {
+  const key = modeWinStreakKey(event);
+  const currentModeWinStreaks = normalizeModeWinStreaks(current.modeWinStreaks);
+  if (!key) {
+    const nextStreak = didWin ? current.winStreak + 1 : 0;
+    return {
+      key,
+      nextStreak,
+      modeWinStreaks: currentModeWinStreaks,
+      overallWinStreak: nextStreak,
+    };
+  }
+  const nextStreak = didWin ? (currentModeWinStreaks[key] || 0) + 1 : 0;
+  const modeWinStreaks = { ...currentModeWinStreaks, [key]: nextStreak };
+  return {
+    key,
+    nextStreak,
+    modeWinStreaks,
+    overallWinStreak: maxModeWinStreak(modeWinStreaks),
+  };
 }
 
 function applyMatchRewardToProfile(username, didWin, event = {}) {
@@ -1687,25 +2166,29 @@ function applyMatchRewardToProfile(username, didWin, event = {}) {
     coins: current.coins,
     next: levelRequirement(current.level),
   };
-  const nextStreak = didWin ? current.winStreak + 1 : 0;
-  const bonusRate = didWin ? streakBonusRate(nextStreak) : 0;
-  const xp = Math.round((didWin ? WIN_XP : LOSS_XP) * (1 + bonusRate));
-  const coins = didWin ? Math.round(WIN_COINS * (1 + bonusRate)) : 0;
+  const streakState = nextWinStreakState(current, didWin, event);
+  const bonusRate = didWin ? streakBonusRate(streakState.nextStreak) : 0;
+  const xp = Math.round(matchBaseXp(event, current, didWin) * (1 + bonusRate));
+  const coins = didWin ? Math.round(matchWinCoins(event) * (1 + bonusRate)) : 0;
+  const allowAchievements = countsForAchievements(event);
   const updatedBeforeAchievements = addExperience({
     ...current,
     coins: current.coins + coins,
-    winStreak: nextStreak,
+    winStreak: streakState.overallWinStreak,
+    modeWinStreaks: streakState.modeWinStreaks,
     totalWins: current.totalWins + (didWin ? 1 : 0),
     totalLosses: current.totalLosses + (didWin ? 0 : 1),
-    achievementStats: addAchievementStats(current.achievementStats, {
+    achievementStats: allowAchievements ? addAchievementStats(current.achievementStats, {
       matchesFinished: 1,
       separateDeviceMatches: event.separateDeviceMatch ? 1 : 0,
       standardWins: didWin && event.mode === "Standard Mode" ? 1 : 0,
       powerWins: didWin && event.mode === "Power Up Mode" ? 1 : 0,
       totalCoinsEarned: coins,
-    }),
+    }) : current.achievementStats,
   }, xp);
-  const achievementResult = awardEligibleAchievements(updatedBeforeAchievements, event);
+  const achievementResult = allowAchievements
+    ? awardEligibleAchievements(updatedBeforeAchievements, event)
+    : { profile: updatedBeforeAchievements, unlocked: [] };
   const achievementCoins = achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0);
   const updated = applyQuestProgressToProfile(achievementResult.profile, {
     matchesPlayed: 1,
@@ -1723,7 +2206,8 @@ function applyMatchRewardToProfile(username, didWin, event = {}) {
     baseXp: xp,
     baseCoins: coins,
     unlockedAchievements: achievementResult.unlocked,
-    winStreak: updated.winStreak,
+    winStreak: streakState.nextStreak,
+    modeWinStreaks: updated.modeWinStreaks,
     level: updated.level,
     before,
     after: {
@@ -1749,25 +2233,29 @@ async function applyRewardToFirebaseProfile(username, didWin) {
       coins: current.coins,
       next: levelRequirement(current.level),
     };
-    const nextStreak = didWin ? current.winStreak + 1 : 0;
-    const bonusRate = didWin ? streakBonusRate(nextStreak) : 0;
-    const xp = Math.round((didWin ? WIN_XP : LOSS_XP) * (1 + bonusRate));
-    const coins = didWin ? Math.round(WIN_COINS * (1 + bonusRate)) : 0;
+    const streakState = nextWinStreakState(current, didWin, event);
+    const bonusRate = didWin ? streakBonusRate(streakState.nextStreak) : 0;
+    const xp = Math.round(matchBaseXp(event, current, didWin) * (1 + bonusRate));
+    const coins = didWin ? Math.round(matchWinCoins(event) * (1 + bonusRate)) : 0;
+    const allowAchievements = countsForAchievements(event);
     const updatedBeforeAchievements = addExperience({
       ...current,
       coins: current.coins + coins,
-      winStreak: nextStreak,
+      winStreak: streakState.overallWinStreak,
+      modeWinStreaks: streakState.modeWinStreaks,
       totalWins: current.totalWins + (didWin ? 1 : 0),
       totalLosses: current.totalLosses + (didWin ? 0 : 1),
-      achievementStats: addAchievementStats(current.achievementStats, {
+      achievementStats: allowAchievements ? addAchievementStats(current.achievementStats, {
         matchesFinished: 1,
         separateDeviceMatches: event.separateDeviceMatch ? 1 : 0,
         standardWins: didWin && event.mode === "Standard Mode" ? 1 : 0,
         powerWins: didWin && event.mode === "Power Up Mode" ? 1 : 0,
         totalCoinsEarned: coins,
-      }),
+      }) : current.achievementStats,
     }, xp);
-  const achievementResult = awardEligibleAchievements(updatedBeforeAchievements, event);
+  const achievementResult = allowAchievements
+    ? awardEligibleAchievements(updatedBeforeAchievements, event)
+    : { profile: updatedBeforeAchievements, unlocked: [] };
     const achievementCoins = achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0);
     const updated = applyQuestProgressToProfile(achievementResult.profile, {
       matchesPlayed: 1,
@@ -1784,7 +2272,8 @@ async function applyRewardToFirebaseProfile(username, didWin) {
         baseXp: xp,
         baseCoins: coins,
         unlockedAchievements: achievementResult.unlocked,
-        winStreak: updated.winStreak,
+        winStreak: streakState.nextStreak,
+        modeWinStreaks: updated.modeWinStreaks,
         level: updated.level,
         profile: updated,
         before,
@@ -1806,10 +2295,14 @@ async function applyRewardToFirebaseProfile(username, didWin) {
 function currentMatchAchievementEvent(username, didWin) {
   if (!game) return {};
   const player = game.players.find((candidate) => candidate.name === username);
+  const opponent = game.players.find((candidate) => candidate.name !== username);
+  const opponentProfile = opponent ? profileWithEconomy(getProfile(opponent.name) || {}) : null;
   const liveHands = player ? player.hands.filter((value) => value > 0).length : 0;
   return {
     mode: game.mode,
     submode: game.submode,
+    aiDifficulty: game.aiDifficulty || null,
+    opponentLevel: opponentProfile ? opponentProfile.level : 1,
     separateDeviceMatch: game.submode === "Separate Devices",
     cleanVictory: didWin && liveHands === 2,
     closeCall: didWin && liveHands === 1,
@@ -1945,7 +2438,7 @@ function animateCoinReward(reward) {
 
 function winStreakText(username) {
   const profile = getProfile(username);
-  const streak = normalizeEconomy(profile || {}).winStreak;
+  const streak = game ? activeModeWinStreak(profile, game) : normalizeEconomy(profile || {}).winStreak;
   return streak > 0 ? `${streak} game win streak 🔥` : "";
 }
 
@@ -1988,6 +2481,7 @@ function resetProfileProgress(username, options = {}) {
     level: 1,
     experience: 0,
     winStreak: 0,
+    modeWinStreaks: defaultModeWinStreaks(),
     totalWins: options.resetRecord ? 0 : economy.totalWins,
     totalLosses: options.resetRecord ? 0 : economy.totalLosses,
     coins: options.resetCoins ? 0 : economy.coins,
@@ -2224,6 +2718,7 @@ function localProfileFromFirebaseData(remoteProfile, options = {}) {
     experience: economy.experience,
     coins: economy.coins,
     winStreak: economy.winStreak,
+    modeWinStreaks: economy.modeWinStreaks,
     totalWins: economy.totalWins,
     totalLosses: economy.totalLosses,
     achievements: Array.isArray(remoteProfile.achievements) ? remoteProfile.achievements : [],
@@ -2370,7 +2865,7 @@ function clearFirebaseRuntimeData() {
 }
 
 function activeScreenId() {
-  return ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "gameScreen"]
+  return ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"]
     .find((id) => !document.querySelector(`#${id}`).hidden) || "unknown";
 }
 
@@ -2606,6 +3101,7 @@ function restoreGameStateFromLobby(lobby) {
   game.lobbyId = lobby.id;
   if (game.over) return false;
   applyGameCharacters();
+  if (!Array.isArray(game.playerWinStreaks)) applyGameWinStreaks();
   clearForfeitAbsence(getActiveUsername());
   showScreen("gameScreen");
   render();
@@ -2923,6 +3419,7 @@ function profileProgress(username) {
     next: levelRequirement(economy.level),
     coins: economy.coins,
     winStreak: economy.winStreak,
+    modeWinStreaks: economy.modeWinStreaks,
   };
 }
 
@@ -3408,30 +3905,111 @@ function runProgressionSmokeTest() {
     };
   });
 
-  const failures = [...achievementResults, ...negativeAchievementResults, ...questResults].filter((result) => !result.ok);
+  const streakProfile = smokeProfile({
+    winStreak: 4,
+    modeWinStreaks: defaultModeWinStreaks({ standardAiEasy: 2, standardFriends: 4, powerAiMedium: 1 }),
+  });
+  const aiWinStreak = nextWinStreakState(streakProfile, true, { mode: "Standard Mode", submode: "Play vs AI", aiDifficulty: "easy" });
+  const friendsLossStreak = nextWinStreakState(streakProfile, false, { mode: "Standard Mode", submode: "Separate Devices" });
+  const sameDeviceStreakKey = modeWinStreakKey({ mode: "Standard Mode", submode: "Pass and Play" });
+  const streakResults = [
+    {
+      id: "standardAiEasyWin",
+      ok: aiWinStreak.nextStreak === 3
+        && aiWinStreak.modeWinStreaks.standardAiEasy === 3
+        && aiWinStreak.modeWinStreaks.standardFriends === 4,
+    },
+    {
+      id: "standardFriendsLoss",
+      ok: friendsLossStreak.nextStreak === 0
+        && friendsLossStreak.modeWinStreaks.standardFriends === 0
+        && friendsLossStreak.modeWinStreaks.standardAiEasy === 2
+        && friendsLossStreak.modeWinStreaks.powerAiMedium === 1,
+    },
+    {
+      id: "sameDeviceUntracked",
+      ok: sameDeviceStreakKey === "",
+    },
+  ];
+
+  const easyAiAchievementProfile = smokeProfile({
+    totalWins: 0,
+    achievementStats: defaultAchievementStats(),
+  });
+  const easyAiEvent = { mode: "Standard Mode", submode: "Play vs AI", aiDifficulty: "easy" };
+  const easyAiAllowAchievements = countsForAchievements(easyAiEvent);
+  const easyAiAfterStats = easyAiAllowAchievements ? addAchievementStats(easyAiAchievementProfile.achievementStats, {
+    matchesFinished: 1,
+    standardWins: 1,
+    totalCoinsEarned: 2,
+  }) : easyAiAchievementProfile.achievementStats;
+  const easyAiAchievementResult = easyAiAllowAchievements
+    ? awardEligibleAchievements(profileWithEconomy(easyAiAchievementProfile, {
+      totalWins: 1,
+      achievementStats: easyAiAfterStats,
+    }), easyAiEvent)
+    : { profile: profileWithEconomy(easyAiAchievementProfile, { totalWins: 1, achievementStats: easyAiAfterStats }), unlocked: [] };
+  const easyAiQuestProfile = applyQuestProgressToProfile(easyAiAchievementResult.profile, {
+    matchesPlayed: 1,
+    wins: 1,
+    coinsEarned: 2,
+  });
+  const easyAiResults = [
+    {
+      id: "easyAiNoAchievements",
+      ok: !easyAiAllowAchievements
+        && easyAiAchievementResult.unlocked.length === 0
+        && normalizeAchievementStats(easyAiQuestProfile).matchesFinished === 0
+        && normalizeAchievementStats(easyAiQuestProfile).standardWins === 0
+        && normalizeQuestState(easyAiQuestProfile).daily.matchesPlayed === 1
+        && normalizeQuestState(easyAiQuestProfile).daily.wins === 1,
+    },
+  ];
+
+  const failures = [...achievementResults, ...negativeAchievementResults, ...questResults, ...streakResults, ...easyAiResults].filter((result) => !result.ok);
   return {
     ok: failures.length === 0,
     counts: {
       achievements: achievementResults.length,
       negativeAchievementChecks: negativeAchievementResults.length,
       quests: questResults.length,
+      streaks: streakResults.length,
+      easyAiChecks: easyAiResults.length,
       failures: failures.length,
     },
     failures,
     achievements: achievementResults,
     negativeAchievementChecks: negativeAchievementResults,
     quests: questResults,
+    streaks: streakResults,
+    easyAiChecks: easyAiResults,
   };
+}
+
+function publicProfileWinStreakMarkup(username) {
+  if (!game || !username) return "";
+  const playerIndex = game.players.findIndex((player) => player.name === username);
+  if (playerIndex === -1) return "";
+  const streak = Array.isArray(game.playerWinStreaks)
+    ? Math.max(0, Math.floor(game.playerWinStreaks[playerIndex] || 0))
+    : activeModeWinStreak(getProfile(username), game);
+  return streak > 0
+    ? `<span class="public-profile-streak" aria-label="${streak} win streak">🔥 ${streak}</span>`
+    : "";
 }
 
 function profileCardMarkup(username, options = {}) {
   const character = getCharacterForUsername(username);
   const progress = profileProgress(username);
   const tag = profileTag(username);
+  const streakMarkup = publicProfileWinStreakMarkup(username);
   return `
     <div class="public-profile-card">
       ${characterMarkup(character, options.avatarClass || "profile-avatar")}
-      <h2>${username || "Guest"}${tag ? `<span class="profile-tag">#${tag}</span>` : ""}</h2>
+      <h2 class="public-profile-name">
+        <span>${escapeHtml(username || "Guest")}${tag ? `<span class="profile-tag">#${escapeHtml(tag)}</span>` : ""}</span>
+        ${streakMarkup}
+      </h2>
       <div class="level-panel compact">
         <div>
           <strong>Level ${progress.level}</strong>
@@ -3461,7 +4039,7 @@ function renderProfile() {
     document.querySelector("#profilePhone").value = profile ? (profile.email || profile.phone || "") : (firebaseUser ? firebaseUser.email || "" : "");
   }
   document.querySelector("#profileMessage").textContent = firebaseUser && profile
-    ? "Signed in with Firebase."
+    ? ""
     : authIntroMessage();
   const username = activeUsername || (profile ? profile.username : "Guest");
   const progress = profileProgress(username);
@@ -3486,8 +4064,11 @@ function renderProfile() {
   document.querySelector("#profileExpFill").style.width = `${Math.min(100, (progress.exp / progress.next) * 100)}%`;
   document.querySelector("#profileCoins").innerHTML = coinAmountMarkup(progress.coins);
   const streakEl = document.querySelector("#profileWinStreak");
-  streakEl.textContent = progress.winStreak > 0 ? `${progress.winStreak} game streak` : "";
-  streakEl.hidden = progress.winStreak === 0;
+  const activeStreaks = activeWinStreakSummaries(progress.modeWinStreaks);
+  streakEl.innerHTML = activeStreaks
+    .map((item) => `<span title="${escapeHtml(item.label)}"><abbr>${escapeHtml(item.shortLabel)}</abbr><strong>🔥 ${item.streak}</strong></span>`)
+    .join("");
+  streakEl.hidden = activeStreaks.length === 0;
   const mockPanel = document.querySelector(".mock-testing-panel");
   if (mockPanel) mockPanel.hidden = !devToolsEnabled();
   renderAuthFlowPanels();
@@ -3495,7 +4076,7 @@ function renderProfile() {
   document.querySelector("#authFlow").hidden = Boolean(firebaseUser && profile);
   document.querySelector("#saveProfile").hidden = true;
   document.querySelector("#profileBack").hidden = !(firebaseUser && profile);
-  document.querySelector("#deleteFirebaseAccount").hidden = !(firebaseUser && profile);
+  document.querySelector("#deleteFirebaseAccount").hidden = true;
 }
 
 function authIntroMessage() {
@@ -4888,6 +5469,9 @@ function renderCharacterStore() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-card";
+    button.classList.toggle("premium-card", ["Premium", "Deluxe", "Legendary"].includes(character.tier));
+    button.classList.toggle("deluxe-card", ["Deluxe", "Legendary"].includes(character.tier));
+    button.classList.toggle("legendary-card", character.tier === "Legendary");
     button.classList.toggle("selected", character.id === pendingCharacterId);
     button.classList.toggle("locked", !owned);
     button.innerHTML = `
@@ -4913,6 +5497,11 @@ document.querySelector("#menuAchievements").addEventListener("click", () => open
 document.querySelector("#menuAchievements").addEventListener("click", playMenuSound);
 document.querySelector("#menuStore").addEventListener("click", () => openCollectionScreen("storeScreen"));
 document.querySelector("#menuStore").addEventListener("click", playMenuSound);
+document.querySelector("#menuHelp").addEventListener("click", () => {
+  previousScreen = activeScreenId();
+  showScreen("helpScreen");
+});
+document.querySelector("#menuHelp").addEventListener("click", playMenuSound);
 document.querySelector("#menuFriends").addEventListener("click", () => requireProfile("friendsScreen"));
 document.querySelector("#menuFriends").addEventListener("click", playMenuSound);
 document.querySelector("#menuNotifications").addEventListener("click", () => requireProfile("notificationsScreen"));
@@ -4943,6 +5532,22 @@ document.querySelector("#passPlayMode").addEventListener("click", () => {
   beginGameFlow("submodeScreen");
 });
 document.querySelector("#passPlayMode").addEventListener("click", playMenuSound);
+document.querySelector("#aiMode").addEventListener("click", () => {
+  pendingSubmode = "Play vs AI";
+  pendingInviteFriendId = "";
+  showScreen("aiDifficultyScreen");
+});
+document.querySelector("#aiMode").addEventListener("click", playMenuSound);
+document.querySelectorAll(".ai-difficulty").forEach((button) => {
+  button.addEventListener("click", () => {
+    pendingAiDifficulty = button.dataset.aiDifficulty || "easy";
+    renderAiDifficultyOptions();
+    beginGameFlow("aiDifficultyScreen");
+  });
+  button.addEventListener("click", playMenuSound);
+});
+document.querySelector("#aiDifficultyBack").addEventListener("click", () => showScreen("submodeScreen"));
+document.querySelector("#aiDifficultyBack").addEventListener("click", playMenuSound);
 document.querySelector("#separateDevicesMode").addEventListener("click", openSeparateDevicesInvite);
 document.querySelector("#separateDevicesMode").addEventListener("click", playMenuSound);
 document.querySelector("#loadBack").addEventListener("click", () => showScreen("mainMenuScreen"));
@@ -5173,6 +5778,10 @@ document.querySelector("#settingsSignOut").addEventListener("click", async () =>
   await signOutToLanding();
 });
 document.querySelector("#settingsSignOut").addEventListener("click", playMenuSound);
+document.querySelector("#helpBack").addEventListener("click", () => showScreen(previousScreen === "helpScreen" ? "mainMenuScreen" : previousScreen));
+document.querySelector("#helpBack").addEventListener("click", playMenuSound);
+document.querySelector("#helpBackBottom").addEventListener("click", () => showScreen(previousScreen === "helpScreen" ? "mainMenuScreen" : previousScreen));
+document.querySelector("#helpBackBottom").addEventListener("click", playMenuSound);
 document.querySelector("#openPrivacyPolicy").addEventListener("click", () => openLegalDialog("privacy"));
 document.querySelector("#openPrivacyPolicy").addEventListener("click", playMenuSound);
 document.querySelector("#openTerms").addEventListener("click", () => openLegalDialog("terms"));
@@ -5216,6 +5825,7 @@ document.querySelector("#returnToLobby").addEventListener("click", (event) => {
 });
 document.querySelector("#returnToLobby").addEventListener("click", playMenuSound);
 document.querySelector("#gameOverMenu").addEventListener("click", () => {
+  clearAiMoveTimer();
   closeGameLobbyForActivePlayer();
   game = null;
   showScreen("mainMenuScreen");
@@ -5295,7 +5905,19 @@ document.querySelector("#backStartupNotice").addEventListener("click", () => {
 function chooseMode(mode) {
   pendingMode = mode;
   document.querySelector("#submodeModeLabel").textContent = mode;
+  renderAiDifficultyOptions();
   showScreen("submodeScreen");
+}
+
+function renderAiDifficultyOptions() {
+  const aiAvailable = pendingMode === "Standard Mode";
+  const aiModeButton = document.querySelector("#aiMode");
+  const panel = document.querySelector("#aiDifficultyPanel");
+  if (aiModeButton) aiModeButton.hidden = !aiAvailable;
+  if (panel) panel.hidden = !aiAvailable;
+  document.querySelectorAll(".ai-difficulty").forEach((button) => {
+    button.classList.toggle("active", button.dataset.aiDifficulty === pendingAiDifficulty);
+  });
 }
 
 function playMenuSound() {
