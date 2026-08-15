@@ -41,6 +41,13 @@ const MOCK_USERS_KEY = "chopstickDuel.mockUsers";
 const ACTIVE_USER_KEY = "chopstickDuel.activeUser";
 const ACTIVE_INVITE_KEY = "chopstickDuel.activeInvite";
 const LOBBIES_KEY = "chopstickDuel.lobbies";
+const SOUNDTRACK_PLAYLIST = [
+  { id: "theGirlFromBoo", title: "The Girl From Boo", src: "/assets/audio/the-girl-from-boo.mp3", launchTrack: true },
+  { id: "specialFeature", title: "special feature", src: "/assets/audio/special-feature.mp3" },
+  { id: "ceilingInstrumental", title: "Ceiling (Instrumental Version)", src: "/assets/audio/ceiling-instrumental.mp3" },
+  { id: "skyline", title: "Skyline", src: "/assets/audio/skyline.mp3" },
+  { id: "lushHour", title: "Lush Hour", src: "/assets/audio/lush-hour.mp3" },
+];
 const ECONOMY_RESET_KEY = "chopstickDuel.economyReset.v1";
 const SLEEPY_PANDA_RESET_KEY = "chopstickDuel.sleepyPandaReset.v1";
 const MOCK_SEED_CLEANUP_KEY = "chopstickDuel.mockSeedCleanup.v1";
@@ -141,6 +148,12 @@ let collectionBackScreen = "mainMenuScreen";
 let pendingSaveName = "";
 let pendingRenameId = "";
 let audioContext;
+let backgroundMusic = null;
+let backgroundMusicUnlocked = false;
+let backgroundMusicQueue = [];
+let backgroundMusicQueueIndex = 0;
+let backgroundMusicHasStarted = false;
+let backgroundMusicUnlockListenersInstalled = false;
 let pendingEffect = null;
 let pendingMode = "Standard Mode";
 let pendingCardIndex = null;
@@ -153,6 +166,7 @@ let pendingRenameAccount = "";
 let pendingHostClosedNoticeId = "";
 let pendingHandleEdit = "";
 let pendingStartupBackScreen = "submodeScreen";
+let pendingIncomingGameInviteId = "";
 let forfeitTimerId = null;
 let pendingDeclineGameLobbyId = "";
 let forfeitTimerHidden = false;
@@ -476,6 +490,7 @@ function showScreen(screenId) {
   if (screenId === "mainMenuScreen") {
     renderSelectedCharacter();
     renderActiveLobbyPrompts();
+    window.setTimeout(showIncomingGameInvitePopupIfNeeded, 0);
   }
   if (screenId === "profileScreen") renderProfile();
   if (screenId === "friendsScreen") renderFriends();
@@ -1374,6 +1389,127 @@ function playEndGameSounds(result) {
   playSound(result === "lose" ? "sadLose" : "trumpetVictory");
 }
 
+function shuffledSoundtrackTracks(tracks) {
+  const shuffled = [...tracks];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+}
+
+function rebuildBackgroundMusicQueue(forceLaunchTrack = false) {
+  const launchTrack = SOUNDTRACK_PLAYLIST.find((track) => track.launchTrack) || SOUNDTRACK_PLAYLIST[0];
+  if (forceLaunchTrack && launchTrack) {
+    const remainingTracks = SOUNDTRACK_PLAYLIST.filter((track) => track !== launchTrack);
+    backgroundMusicQueue = [launchTrack, ...shuffledSoundtrackTracks(remainingTracks)];
+  } else {
+    backgroundMusicQueue = shuffledSoundtrackTracks(SOUNDTRACK_PLAYLIST);
+  }
+  backgroundMusicQueueIndex = 0;
+}
+
+function getCurrentBackgroundTrack() {
+  if (!backgroundMusicQueue.length) rebuildBackgroundMusicQueue();
+  return backgroundMusicQueue[backgroundMusicQueueIndex] || backgroundMusicQueue[0];
+}
+
+function loadCurrentBackgroundTrack() {
+  const music = backgroundMusic;
+  const track = getCurrentBackgroundTrack();
+  if (!music || !track || music.dataset.trackId === track.id) return;
+  music.dataset.trackId = track.id;
+  music.src = track.src;
+  music.load();
+}
+
+function playCurrentBackgroundTrack() {
+  if (!backgroundMusicUnlocked) return;
+  const music = getBackgroundMusic();
+  if (!music || music.volume <= 0) return;
+  loadCurrentBackgroundTrack();
+  music.play().catch(() => null);
+}
+
+function playNextBackgroundTrack() {
+  if (!backgroundMusicQueue.length) rebuildBackgroundMusicQueue();
+  backgroundMusicQueueIndex += 1;
+  if (backgroundMusicQueueIndex >= backgroundMusicQueue.length) rebuildBackgroundMusicQueue();
+  if (backgroundMusic) backgroundMusic.dataset.trackId = "";
+  playCurrentBackgroundTrack();
+}
+
+function resetBackgroundMusicToLaunchTrack() {
+  backgroundMusicHasStarted = false;
+  rebuildBackgroundMusicQueue(true);
+  if (!backgroundMusic) return;
+  backgroundMusic.dataset.trackId = "";
+  loadCurrentBackgroundTrack();
+  backgroundMusic.currentTime = 0;
+  if (backgroundMusicUnlocked && backgroundMusic.volume > 0) {
+    backgroundMusic.play().catch(() => null);
+  }
+}
+
+function getBackgroundMusic() {
+  if (backgroundMusic || typeof Audio === "undefined") return backgroundMusic;
+  rebuildBackgroundMusicQueue(!backgroundMusicHasStarted);
+  backgroundMusicHasStarted = true;
+  backgroundMusic = new Audio();
+  backgroundMusic.loop = false;
+  backgroundMusic.preload = "auto";
+  backgroundMusic.addEventListener("ended", playNextBackgroundTrack);
+  loadCurrentBackgroundTrack();
+  updateBackgroundMusicVolume();
+  return backgroundMusic;
+}
+
+function updateBackgroundMusicVolume() {
+  if (!backgroundMusic) return;
+  const settings = getSettings();
+  backgroundMusic.volume = Math.max(0, Math.min(1, settings.musicVolume / 100)) * 0.42;
+  if (backgroundMusic.volume === 0 && !backgroundMusic.paused) backgroundMusic.pause();
+  if (backgroundMusic.volume > 0 && backgroundMusicUnlocked && backgroundMusic.paused) {
+    playCurrentBackgroundTrack();
+  }
+}
+
+function unlockBackgroundMusic() {
+  const music = getBackgroundMusic();
+  if (!music) return;
+  backgroundMusicUnlocked = true;
+  updateBackgroundMusicVolume();
+  if (music.volume > 0) playCurrentBackgroundTrack();
+}
+
+function startBackgroundMusicOnLaunch() {
+  const music = getBackgroundMusic();
+  if (!music) return;
+  updateBackgroundMusicVolume();
+  if (music.volume > 0) {
+    loadCurrentBackgroundTrack();
+    music.play()
+      .then(() => {
+        backgroundMusicUnlocked = true;
+      })
+      .catch(() => null);
+  }
+}
+
+function installBackgroundMusicUnlockListeners() {
+  if (backgroundMusicUnlockListenersInstalled) return;
+  backgroundMusicUnlockListenersInstalled = true;
+  const unlockOnce = () => unlockBackgroundMusic();
+  ["pointerdown", "touchstart", "keydown", "click"].forEach((eventName) => {
+    window.addEventListener(eventName, unlockOnce, { capture: true, once: true, passive: true });
+  });
+}
+
+function startBackgroundMusicOnLanding() {
+  installBackgroundMusicUnlockListeners();
+  startBackgroundMusicOnLaunch();
+}
+
 function playTone(context, frequency, delay, duration, volume, type) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
@@ -1779,6 +1915,7 @@ function getSettings() {
 function setSettings(settings) {
   writeAccountJson(SETTINGS_KEY, settings);
   document.body.classList.toggle("reduce-motion", settings.reduceMotion);
+  updateBackgroundMusicVolume();
 }
 
 function renderSettings() {
@@ -2766,6 +2903,7 @@ async function loadFirebaseProfile(user) {
 }
 
 async function signOutToLanding() {
+  resetBackgroundMusicToLaunchTrack();
   resetSignedOutAuthView();
   previousScreen = "mainMenuScreen";
   if (firebaseUser) {
@@ -2928,7 +3066,10 @@ function refreshCurrentScreenFromFirebaseData() {
   if (!document.querySelector("#notificationsScreen").hidden) renderNotifications();
   if (!document.querySelector("#waitingLobbyScreen").hidden) renderWaitingLobby();
   if (!document.querySelector("#loadScreen").hidden) renderSaveList();
-  if (!document.querySelector("#mainMenuScreen").hidden) renderActiveLobbyPrompts();
+  if (!document.querySelector("#mainMenuScreen").hidden) {
+    renderActiveLobbyPrompts();
+    showIncomingGameInvitePopupIfNeeded();
+  }
 }
 
 function startFirebaseDataListeners(uid) {
@@ -4106,10 +4247,12 @@ function resetSignedOutAuthView() {
 
 function renderAuthFlowPanels() {
   const signedInWithProfile = Boolean(firebaseUser && getProfile());
-  document.querySelector("#authLandingPanel").hidden = signedInWithProfile || authFlowMode !== "landing";
+  const landingVisible = !signedInWithProfile && authFlowMode === "landing";
+  document.querySelector("#authLandingPanel").hidden = !landingVisible;
   document.querySelector("#authCreateDetailsPanel").hidden = signedInWithProfile || authFlowMode !== "createDetails";
   document.querySelector("#authCreatePasswordPanel").hidden = signedInWithProfile || authFlowMode !== "createPassword";
   document.querySelector("#authLoginPanel").hidden = signedInWithProfile || authFlowMode !== "login";
+  if (landingVisible) window.setTimeout(startBackgroundMusicOnLanding, 0);
 }
 
 async function continueCreateAccountFlow() {
@@ -4821,12 +4964,15 @@ async function sendGameInvite(friendId) {
     text: `${hostUsername} invited you to ${pendingMode}.`,
     sender: hostUsername,
     senderUid: firebaseUser ? firebaseUser.uid : "",
+    senderTag: firebaseProfile ? firebaseProfile.tag || "" : profileTag(hostUsername),
     recipient: friend.username,
     recipientUid: friend.uid || "",
     participantUids: firebaseUser && friend.uid ? [firebaseUser.uid, friend.uid] : [],
     participants: [hostUsername, friend.username],
     mode: pendingMode,
     submode: "Separate Devices",
+    senderCharacterId: getSelectedCharacter().id,
+    recipientCharacterId: friend.selectedCharacterId || friend.characterId || "",
     status: existingLobby ? existingLobby.status : "pending",
     unread: true,
     createdAt: new Date().toISOString(),
@@ -4837,8 +4983,16 @@ async function sendGameInvite(friendId) {
     readyFor: existingLobby ? existingLobby.readyFor || [] : [],
   };
   if (firebaseUser && friend.uid) {
-    await sendFirebaseGameInvite(notification, friend.uid);
-    firebaseLobbies = [notification, ...firebaseLobbies.filter((lobby) => lobby.id !== notification.id)];
+    try {
+      await sendFirebaseGameInvite(notification, friend.uid);
+      firebaseLobbies = [notification, ...firebaseLobbies.filter((lobby) => lobby.id !== notification.id)];
+    } catch (error) {
+      console.warn("Unable to send Firebase game invite", error);
+      document.querySelector("#inviteFriendDialog").close();
+      document.querySelector("#inviteSentText").textContent = "Unable to send invite. Please try again.";
+      document.querySelector("#inviteSentDialog").showModal();
+      return;
+    }
   } else {
     setNotifications([notification, ...existing], friend.username);
   }
@@ -4846,8 +5000,6 @@ async function sendGameInvite(friendId) {
   setActiveInviteId(notification.id);
   setActiveInviteData(notification);
   document.querySelector("#inviteFriendDialog").close();
-  document.querySelector("#inviteSentText").textContent = `${friend.username} received a game invite.`;
-  document.querySelector("#inviteSentDialog").showModal();
   showScreen("waitingLobbyScreen");
 }
 
@@ -4900,10 +5052,8 @@ function renderNotifications() {
         renderNotifications();
         return;
       }
-      joinLobby(notice.id, getActiveUsername());
-      setActiveInviteId(notice.id);
+      joinGameInviteFromNotice(notice);
       playMenuSound();
-      showScreen("waitingLobbyScreen");
     });
     const deleteButton = row.querySelector('[data-action="delete"]');
     if (deleteButton) {
@@ -4933,6 +5083,52 @@ function renderNotificationBadge() {
   if (!badge) return;
   const activeUser = getActiveUsername();
   badge.hidden = !getNotifications().some((notice) => notice.unread && (!notice.recipient || notice.recipient === activeUser));
+}
+
+function pendingIncomingGameInvite() {
+  const activeUser = getActiveUsername();
+  if (!activeUser) return null;
+  return getNotifications()
+    .filter((notice) => notice.type === "gameInvite"
+      && notice.status !== "accepted"
+      && notice.sender !== activeUser
+      && (!notice.recipient || notice.recipient === activeUser))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0] || null;
+}
+
+function showIncomingGameInvitePopupIfNeeded() {
+  const dialog = document.querySelector("#incomingGameInviteDialog");
+  if (!dialog || dialog.open || activeScreenId() !== "mainMenuScreen") return false;
+  const notice = pendingIncomingGameInvite();
+  if (!notice) return false;
+  pendingIncomingGameInviteId = notice.id;
+  document.querySelector("#incomingGameInviteText").textContent = `${notice.sender || "A friend"} invited you to ${notice.mode || "a match"}.`;
+  dialog.showModal();
+  return true;
+}
+
+function joinGameInviteFromNotice(notice) {
+  if (!notice || !notice.id) return;
+  const activeUser = getActiveUsername();
+  if (!activeUser) return;
+  const existingLobby = getLobbies().find((lobby) => lobby.id === notice.id);
+  if (!existingLobby) {
+    upsertLobby({
+      chat: [],
+      closedFor: [],
+      minimizedFor: [],
+      readyFor: [],
+      ...notice,
+      type: "gameInvite",
+      status: "pending",
+      joinedFor: [notice.sender].filter(Boolean),
+      recipient: notice.recipient || activeUser,
+      participants: Array.from(new Set([notice.sender, notice.recipient || activeUser].filter(Boolean))),
+    });
+  }
+  joinLobby(notice.id, activeUser);
+  setActiveInviteId(notice.id);
+  showScreen("waitingLobbyScreen");
 }
 
 function renderQuestBadge() {
@@ -5764,6 +5960,17 @@ document.querySelector("#inviteAddFriend").addEventListener("click", () => {
   showScreen("friendsScreen");
 });
 document.querySelector("#inviteAddFriend").addEventListener("click", playMenuSound);
+document.querySelector("#acceptIncomingGameInvite").addEventListener("click", () => {
+  const notice = getNotifications().find((candidate) => candidate.id === pendingIncomingGameInviteId) || pendingIncomingGameInvite();
+  document.querySelector("#incomingGameInviteDialog").close();
+  if (notice) joinGameInviteFromNotice(notice);
+});
+document.querySelector("#acceptIncomingGameInvite").addEventListener("click", playMenuSound);
+document.querySelector("#dismissIncomingGameInvite").addEventListener("click", () => {
+  pendingIncomingGameInviteId = "";
+  document.querySelector("#incomingGameInviteDialog").close();
+});
+document.querySelector("#dismissIncomingGameInvite").addEventListener("click", playMenuSound);
 document.querySelector("#settingsBack").addEventListener("click", () => {
   if (previousScreen === "gameScreen") clearForfeitAbsence(getActiveUsername());
   showScreen(previousScreen);
@@ -5921,6 +6128,7 @@ function renderAiDifficultyOptions() {
 }
 
 function playMenuSound() {
+  unlockBackgroundMusic();
   playSound("menu");
 }
 
@@ -5948,6 +6156,8 @@ cleanupMockSeedData();
 runEconomyResetMigration();
 resetSleepyPandaMockAccount();
 setSettings(getSettings());
+installBackgroundMusicUnlockListeners();
+startBackgroundMusicOnLaunch();
 previousScreen = "mainMenuScreen";
 showScreen("profileScreen");
 startFirebaseAuthListener();
