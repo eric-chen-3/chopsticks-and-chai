@@ -154,6 +154,7 @@ let backgroundMusicQueue = [];
 let backgroundMusicQueueIndex = 0;
 let backgroundMusicHasStarted = false;
 let backgroundMusicUnlockListenersInstalled = false;
+let backgroundMusicWasPlayingBeforeHidden = false;
 let pendingEffect = null;
 let pendingMode = "Standard Mode";
 let pendingCardIndex = null;
@@ -242,25 +243,25 @@ const legalCopy = {
 };
 
 const characters = [
-  { id: "honeyBear", name: "Honey Bear", tier: "Starter", className: "bear" },
-  { id: "mochiBunny", name: "Mochi Bunny", tier: "Starter", className: "bunny" },
-  { id: "milkTeaCat", name: "Milk Tea Cat", tier: "Starter", className: "cat" },
-  { id: "sleepyPanda", name: "Sleepy Panda", tier: "Starter", className: "panda" },
-  { id: "puddingHamster", name: "Pudding Hamster", tier: "Starter", className: "hamster" },
-  { id: "peachFox", name: "Peach Fox", tier: "Unlockable", className: "fox" },
-  { id: "sunnyChick", name: "Sunny Chick", tier: "Unlockable", className: "chick" },
-  { id: "bubbleOtter", name: "Bubble Otter", tier: "Unlockable", className: "otter" },
-  { id: "blueberryPenguin", name: "Blueberry Penguin", tier: "Unlockable", className: "penguin" },
-  { id: "mapleRaccoon", name: "Maple Raccoon", tier: "Unlockable", className: "raccoon" },
-  { id: "dreamUnicorn", name: "Dream Unicorn", tier: "Rare", className: "unicorn" },
-  { id: "babyDragon", name: "Baby Dragon", tier: "Rare", className: "dragon" },
-  { id: "cloudBear", name: "Cloud Bear", tier: "Rare", className: "cloud" },
-  { id: "starBunny", name: "Star Bunny", tier: "Rare", className: "star" },
-  { id: "goldenDragon", name: "Golden Dragon", tier: "Premium", className: "golden-dragon premium-avatar" },
-  { id: "jadeTiger", name: "Jade Tiger", tier: "Premium", className: "jade-tiger premium-avatar" },
-  { id: "sakuraKitsune", name: "Sakura Kitsune", tier: "Premium", className: "sakura-kitsune premium-avatar" },
-  { id: "moonRabbit", name: "Moon Rabbit", tier: "Deluxe", className: "moon-rabbit premium-avatar deluxe-avatar" },
-  { id: "crystalAxolotl", name: "Crystal Axolotl", tier: "Deluxe", className: "crystal-axolotl premium-avatar deluxe-avatar" },
+  { id: "honeyBear", name: "Honey Bear", tier: "Common", className: "bear" },
+  { id: "mochiBunny", name: "Mochi Bunny", tier: "Common", className: "bunny" },
+  { id: "milkTeaCat", name: "Milk Tea Cat", tier: "Common", className: "cat" },
+  { id: "sleepyPanda", name: "Sleepy Panda", tier: "Common", className: "panda" },
+  { id: "puddingHamster", name: "Pudding Hamster", tier: "Common", className: "hamster" },
+  { id: "peachFox", name: "Peach Fox", tier: "Rare", className: "fox" },
+  { id: "sunnyChick", name: "Sunny Chick", tier: "Rare", className: "chick" },
+  { id: "bubbleOtter", name: "Bubble Otter", tier: "Rare", className: "otter" },
+  { id: "blueberryPenguin", name: "Blueberry Penguin", tier: "Rare", className: "penguin" },
+  { id: "mapleRaccoon", name: "Maple Raccoon", tier: "Rare", className: "raccoon" },
+  { id: "dreamUnicorn", name: "Dream Unicorn", tier: "Epic", className: "unicorn" },
+  { id: "babyDragon", name: "Baby Dragon", tier: "Epic", className: "dragon" },
+  { id: "cloudBear", name: "Cloud Bear", tier: "Epic", className: "cloud" },
+  { id: "starBunny", name: "Star Bunny", tier: "Epic", className: "star" },
+  { id: "goldenDragon", name: "Golden Dragon", tier: "Deluxe", className: "golden-dragon premium-avatar" },
+  { id: "jadeTiger", name: "Jade Tiger", tier: "Deluxe", className: "jade-tiger premium-avatar" },
+  { id: "sakuraKitsune", name: "Sakura Kitsune", tier: "Deluxe", className: "sakura-kitsune premium-avatar" },
+  { id: "moonRabbit", name: "Moon Rabbit", tier: "Legendary", className: "moon-rabbit premium-avatar deluxe-avatar" },
+  { id: "crystalAxolotl", name: "Crystal Axolotl", tier: "Legendary", className: "crystal-axolotl premium-avatar deluxe-avatar" },
   { id: "imperialPhoenix", name: "Imperial Phoenix", tier: "Legendary", className: "imperial-phoenix premium-avatar deluxe-avatar" },
 ];
 
@@ -1423,8 +1424,13 @@ function loadCurrentBackgroundTrack() {
   music.load();
 }
 
+function appCanPlayBackgroundMusic() {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+
 function playCurrentBackgroundTrack() {
   if (!backgroundMusicUnlocked) return;
+  if (!appCanPlayBackgroundMusic()) return;
   const music = getBackgroundMusic();
   if (!music || music.volume <= 0) return;
   loadCurrentBackgroundTrack();
@@ -1446,7 +1452,7 @@ function resetBackgroundMusicToLaunchTrack() {
   backgroundMusic.dataset.trackId = "";
   loadCurrentBackgroundTrack();
   backgroundMusic.currentTime = 0;
-  if (backgroundMusicUnlocked && backgroundMusic.volume > 0) {
+  if (backgroundMusicUnlocked && backgroundMusic.volume > 0 && appCanPlayBackgroundMusic()) {
     backgroundMusic.play().catch(() => null);
   }
 }
@@ -1469,7 +1475,7 @@ function updateBackgroundMusicVolume() {
   const settings = getSettings();
   backgroundMusic.volume = Math.max(0, Math.min(1, settings.musicVolume / 100)) * 0.42;
   if (backgroundMusic.volume === 0 && !backgroundMusic.paused) backgroundMusic.pause();
-  if (backgroundMusic.volume > 0 && backgroundMusicUnlocked && backgroundMusic.paused) {
+  if (backgroundMusic.volume > 0 && backgroundMusicUnlocked && backgroundMusic.paused && appCanPlayBackgroundMusic()) {
     playCurrentBackgroundTrack();
   }
 }
@@ -1486,7 +1492,7 @@ function startBackgroundMusicOnLaunch() {
   const music = getBackgroundMusic();
   if (!music) return;
   updateBackgroundMusicVolume();
-  if (music.volume > 0) {
+  if (music.volume > 0 && appCanPlayBackgroundMusic()) {
     loadCurrentBackgroundTrack();
     music.play()
       .then(() => {
@@ -1494,6 +1500,37 @@ function startBackgroundMusicOnLaunch() {
       })
       .catch(() => null);
   }
+}
+
+function pauseBackgroundMusicForLifecycle() {
+  if (!backgroundMusic) return;
+  backgroundMusicWasPlayingBeforeHidden = !backgroundMusic.paused && backgroundMusic.volume > 0;
+  backgroundMusic.pause();
+}
+
+function resumeBackgroundMusicForLifecycle() {
+  if (!backgroundMusicWasPlayingBeforeHidden) return;
+  backgroundMusicWasPlayingBeforeHidden = false;
+  playCurrentBackgroundTrack();
+}
+
+function handleAppVisibilityChange() {
+  if (appCanPlayBackgroundMusic()) {
+    resumeBackgroundMusicForLifecycle();
+  } else {
+    pauseBackgroundMusicForLifecycle();
+  }
+}
+
+function installBackgroundMusicLifecycleGuards() {
+  document.addEventListener("visibilitychange", handleAppVisibilityChange);
+  window.addEventListener("pagehide", pauseBackgroundMusicForLifecycle);
+  window.addEventListener("freeze", pauseBackgroundMusicForLifecycle);
+  window.addEventListener("blur", () => {
+    if (!appCanPlayBackgroundMusic()) pauseBackgroundMusicForLifecycle();
+  });
+  window.addEventListener("pageshow", handleAppVisibilityChange);
+  window.addEventListener("focus", handleAppVisibilityChange);
 }
 
 function installBackgroundMusicUnlockListeners() {
@@ -4910,10 +4947,24 @@ function renderInviteFriendList() {
   });
 }
 
+function friendIsOffline(friend) {
+  return String(friend && friend.status ? friend.status : "").toLowerCase() === "offline";
+}
+
+function showInviteStatusMessage(message) {
+  document.querySelector("#inviteFriendDialog").close();
+  document.querySelector("#inviteSentText").textContent = message;
+  document.querySelector("#inviteSentDialog").showModal();
+}
+
 function replaceLobbyInvite(friendId) {
   const lobby = getActiveInvite();
   const friend = getFriends().find((candidate) => candidate.id === friendId);
   if (!lobby || !friend) return;
+  if (friendIsOffline(friend)) {
+    showInviteStatusMessage(`${friend.username} is currently offline.`);
+    return;
+  }
   const previousFriend = lobby.recipient || lobby.invitedFormer || "";
   const shouldClearChat = previousFriend && previousFriend !== friend.username;
   const updated = {
@@ -4939,11 +4990,13 @@ async function sendGameInvite(friendId) {
   const friend = getFriends().find((candidate) => candidate.id === friendId);
   const hostUsername = getActiveUsername();
   if (!friend || !hostUsername) return;
+  if (friendIsOffline(friend)) {
+    showInviteStatusMessage(`${friend.username} is currently offline.`);
+    return;
+  }
   if (tooManyLobbies(hostUsername) || tooManyLobbies(friend.username)) {
     addSystemNotification(hostUsername, "Too Many Lobbies", "You or your friend is already in too many lobbies.");
-    document.querySelector("#inviteFriendDialog").close();
-    document.querySelector("#inviteSentText").textContent = "Unable to send invite. One player is in too many lobbies.";
-    document.querySelector("#inviteSentDialog").showModal();
+    showInviteStatusMessage("Unable to send invite. One player is in too many lobbies.");
     return;
   }
   pendingSubmode = "Separate Devices";
@@ -4988,9 +5041,7 @@ async function sendGameInvite(friendId) {
       firebaseLobbies = [notification, ...firebaseLobbies.filter((lobby) => lobby.id !== notification.id)];
     } catch (error) {
       console.warn("Unable to send Firebase game invite", error);
-      document.querySelector("#inviteFriendDialog").close();
-      document.querySelector("#inviteSentText").textContent = "Unable to send invite. Please try again.";
-      document.querySelector("#inviteSentDialog").showModal();
+      showInviteStatusMessage("Unable to send invite. Please try again.");
       return;
     }
   } else {
@@ -5538,6 +5589,11 @@ function getPlayerCharacter(index) {
 }
 
 function characterPrice(characterId) {
+  const priceOverrides = {
+    moonRabbit: 500,
+    imperialPhoenix: 550,
+  };
+  if (Object.hasOwn(priceOverrides, characterId)) return priceOverrides[characterId];
   const index = characters.findIndex((character) => character.id === characterId);
   if (index <= 0) return 0;
   return 50 + (index * 25);
@@ -5665,15 +5721,13 @@ function renderCharacterStore() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-card";
-    button.classList.toggle("premium-card", ["Premium", "Deluxe", "Legendary"].includes(character.tier));
-    button.classList.toggle("deluxe-card", ["Deluxe", "Legendary"].includes(character.tier));
-    button.classList.toggle("legendary-card", character.tier === "Legendary");
+    button.classList.add(`tier-${character.tier.toLowerCase()}`);
     button.classList.toggle("selected", character.id === pendingCharacterId);
     button.classList.toggle("locked", !owned);
     button.innerHTML = `
       ${characterMarkup(character)}
       <strong>${character.name}</strong>
-      <small>${character.tier} | ${owned ? (character.id === selected.id ? "Saved" : "Owned") : coinAmountMarkup(price)}</small>
+      <small>${character.tier} | ${owned ? "Owned" : coinAmountMarkup(price)}</small>
     `;
     button.addEventListener("click", () => {
       pendingCharacterId = character.id;
@@ -6156,6 +6210,7 @@ cleanupMockSeedData();
 runEconomyResetMigration();
 resetSleepyPandaMockAccount();
 setSettings(getSettings());
+installBackgroundMusicLifecycleGuards();
 installBackgroundMusicUnlockListeners();
 startBackgroundMusicOnLaunch();
 previousScreen = "mainMenuScreen";

@@ -739,27 +739,41 @@ button.save-action {
   font-weight: 900;
 }
 
-.character-card.premium-card {
-  border-color: rgba(217, 155, 49, 0.38);
+.character-card.tier-rare {
+  border-color: rgba(91, 157, 231, 0.58);
   background:
-    linear-gradient(145deg, rgba(255, 250, 228, 0.94), rgba(255, 255, 255, 0.72)),
-    radial-gradient(circle at 20% 12%, rgba(255, 217, 122, 0.54), transparent 30%);
-  box-shadow: 0 7px 0 rgba(189, 139, 42, 0.18), 0 14px 26px rgba(91, 88, 109, 0.14);
+    linear-gradient(145deg, rgba(239, 248, 255, 0.96), rgba(255, 255, 255, 0.72)),
+    radial-gradient(circle at 18% 10%, rgba(143, 211, 255, 0.72), transparent 34%),
+    radial-gradient(circle at 84% 86%, rgba(91, 157, 231, 0.24), transparent 38%);
+  box-shadow: 0 7px 0 rgba(71, 137, 210, 0.16), 0 14px 24px rgba(91, 88, 109, 0.12);
 }
 
-.character-card.deluxe-card {
-  border-color: rgba(143, 211, 255, 0.55);
+.character-card.tier-epic {
+  border-color: rgba(160, 116, 224, 0.62);
   background:
-    linear-gradient(145deg, rgba(255, 250, 228, 0.9), rgba(233, 227, 255, 0.78)),
-    radial-gradient(circle at 80% 16%, rgba(143, 211, 255, 0.58), transparent 34%);
+    linear-gradient(145deg, rgba(247, 241, 255, 0.96), rgba(255, 255, 255, 0.72)),
+    radial-gradient(circle at 20% 14%, rgba(191, 168, 255, 0.72), transparent 34%),
+    radial-gradient(circle at 82% 82%, rgba(135, 91, 203, 0.24), transparent 38%);
+  box-shadow: 0 7px 0 rgba(135, 91, 203, 0.18), 0 14px 26px rgba(91, 88, 109, 0.13);
 }
 
-.character-card.legendary-card {
-  border-color: rgba(255, 217, 122, 0.85);
+.character-card.tier-deluxe {
+  border-color: rgba(226, 96, 96, 0.6);
   background:
-    linear-gradient(145deg, rgba(255, 248, 238, 0.92), rgba(255, 217, 122, 0.24)),
-    radial-gradient(circle at 50% 0%, rgba(255, 157, 180, 0.44), transparent 42%);
-  box-shadow: 0 7px 0 rgba(189, 139, 42, 0.25), 0 0 28px rgba(255, 217, 122, 0.32);
+    linear-gradient(145deg, rgba(255, 241, 238, 0.96), rgba(255, 255, 255, 0.72)),
+    radial-gradient(circle at 19% 12%, rgba(255, 157, 180, 0.66), transparent 34%),
+    radial-gradient(circle at 84% 84%, rgba(201, 68, 68, 0.22), transparent 40%);
+  box-shadow: 0 7px 0 rgba(201, 68, 68, 0.18), 0 14px 26px rgba(91, 88, 109, 0.14);
+}
+
+.character-card.tier-legendary {
+  border-color: rgba(226, 171, 45, 0.92);
+  background:
+    linear-gradient(145deg, rgba(255, 247, 214, 0.98), rgba(255, 255, 255, 0.72)),
+    radial-gradient(circle at 22% 10%, rgba(255, 224, 128, 0.86), transparent 34%),
+    radial-gradient(circle at 78% 82%, rgba(217, 155, 49, 0.36), transparent 42%),
+    linear-gradient(90deg, rgba(255, 236, 164, 0.22), rgba(217, 155, 49, 0.16));
+  box-shadow: 0 7px 0 rgba(189, 139, 42, 0.3), 0 0 30px rgba(255, 217, 122, 0.42);
 }
 
 .character-card.selected {
@@ -1160,16 +1174,17 @@ button.save-action {
   position: absolute;
   --tail-base: 22deg;
   --tail-swing: 30deg;
-  right: -20px;
-  bottom: 0;
-  width: 42px;
-  height: 78px;
-  border-radius: 999px 999px 18px 18px;
+  right: -24px;
+  bottom: -3px;
+  width: 54px;
+  height: 82px;
+  border-radius: 82% 18% 74% 24% / 64% 22% 78% 34%;
   background:
-    linear-gradient(180deg, #fff1d9 0 18%, transparent 19%),
-    linear-gradient(160deg, #f4a26f, #d87956);
+    radial-gradient(ellipse at 48% 12%, #fff1d9 0 24%, transparent 25%),
+    linear-gradient(150deg, #ffc09b 0 18%, #f4a26f 42%, #d87956 100%);
+  clip-path: polygon(58% 0, 88% 15%, 78% 48%, 100% 78%, 58% 100%, 20% 80%, 36% 48%, 8% 22%);
   transform: rotate(22deg);
-  transform-origin: bottom center;
+  transform-origin: 52% 86%;
   z-index: -1;
   animation: tail-sway 2.4s ease-in-out infinite;
 }
@@ -1309,13 +1324,15 @@ button.save-action {
   position: absolute;
   --tail-base: 28deg;
   --tail-swing: 20deg;
-  right: -18px;
-  bottom: -6px;
-  width: 38px;
-  height: 74px;
-  border-radius: 999px;
-  background: repeating-linear-gradient(180deg, #77727f 0 12px, #4d4a55 13px 22px);
+  right: -24px;
+  bottom: -8px;
+  width: 52px;
+  height: 78px;
+  border-radius: 76% 24% 68% 32% / 58% 28% 72% 42%;
+  background: repeating-radial-gradient(ellipse at 52% 22%, #77727f 0 12px, #4d4a55 13px 22px);
+  clip-path: polygon(52% 0, 88% 13%, 72% 36%, 100% 64%, 68% 100%, 30% 90%, 42% 58%, 10% 28%);
   transform: rotate(28deg);
+  transform-origin: 48% 86%;
   z-index: -1;
   animation: tail-sway 2.5s ease-in-out infinite;
 }
@@ -1323,13 +1340,16 @@ button.save-action {
 .unicorn::after {
   content: "";
   position: absolute;
-  left: 12px;
-  top: 28px;
-  width: 28px;
-  height: 72px;
-  border-radius: 999px;
-  background: linear-gradient(var(--lilac), var(--baby-blue), var(--strawberry));
-  transform: rotate(12deg);
+  left: 2px;
+  top: 22px;
+  width: 40px;
+  height: 78px;
+  border-radius: 72% 28% 78% 22% / 44% 36% 64% 56%;
+  background:
+    radial-gradient(ellipse at 68% 18%, rgba(255, 255, 255, 0.46) 0 22%, transparent 23%),
+    linear-gradient(155deg, var(--lilac), var(--baby-blue) 48%, var(--strawberry));
+  clip-path: polygon(46% 0, 82% 10%, 70% 30%, 94% 48%, 66% 68%, 80% 100%, 34% 88%, 42% 62%, 12% 42%, 36% 24%);
+  transform: rotate(8deg);
   filter: drop-shadow(0 0 5px rgba(191, 168, 255, 0.35));
 }
 
@@ -1365,13 +1385,17 @@ button.save-action {
   position: absolute;
   --tail-base: 25deg;
   --tail-swing: 33deg;
-  right: -18px;
-  bottom: 0;
-  width: 34px;
-  height: 76px;
-  border-radius: 999px 999px 18px 18px;
-  background: linear-gradient(var(--fur), #7ac69a);
+  right: -24px;
+  bottom: -4px;
+  width: 54px;
+  height: 80px;
+  border-radius: 74% 26% 64% 36% / 56% 30% 70% 44%;
+  background:
+    linear-gradient(135deg, transparent 0 28%, rgba(255, 248, 238, 0.38) 29% 35%, transparent 36%),
+    linear-gradient(var(--fur), #7ac69a);
+  clip-path: polygon(50% 0, 88% 18%, 70% 42%, 100% 76%, 58% 100%, 22% 82%, 38% 52%, 8% 24%);
   transform: rotate(25deg);
+  transform-origin: 50% 86%;
   z-index: -1;
   animation: tail-sway 2.3s ease-in-out infinite;
 }
@@ -1388,11 +1412,11 @@ button.save-action {
 
 .cloud {
   background:
+    radial-gradient(circle at 34% 44%, #4d4a55 0 4px, transparent 5px),
+    radial-gradient(circle at 66% 44%, #4d4a55 0 4px, transparent 5px),
     radial-gradient(circle at 24% 46%, #fff 0 24px, transparent 25px),
     radial-gradient(circle at 50% 34%, #fff 0 31px, transparent 32px),
     radial-gradient(circle at 76% 48%, #fff 0 23px, transparent 24px),
-    radial-gradient(circle at 34% 44%, #4d4a55 0 4px, transparent 5px),
-    radial-gradient(circle at 66% 44%, #4d4a55 0 4px, transparent 5px),
     #eef9ff;
   animation: mascot-idle 3.8s ease-in-out infinite, cloud-drift 4.8s ease-in-out infinite;
 }
@@ -1412,14 +1436,40 @@ button.save-action {
   background:
     radial-gradient(circle at 34% 44%, #5b4a2f 0 4px, transparent 5px),
     radial-gradient(circle at 66% 44%, #5b4a2f 0 4px, transparent 5px),
+    radial-gradient(ellipse at 50% 68%, #fff8ee 0 28%, transparent 29%),
     linear-gradient(145deg, #fff8cc, #ffe18b);
-  clip-path: polygon(50% 0, 61% 28%, 92% 20%, 75% 47%, 100% 65%, 68% 69%, 69% 100%, 50% 76%, 31% 100%, 32% 69%, 0 65%, 25% 47%, 8% 20%, 39% 28%);
+  border-radius: 54% 54% 42% 42%;
+  clip-path: none;
   animation: mascot-idle 3.8s ease-in-out infinite, star-sparkle 1.7s ease-in-out infinite;
 }
 
-.star .ear,
 .star .apron {
   display: none;
+}
+
+.star .ear {
+  display: block;
+  top: -18px;
+  height: 52px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 8px rgba(255, 217, 122, 0.52);
+}
+
+.star::before,
+.star::after {
+  top: 8px;
+  width: 16px;
+  height: 16px;
+  background: #ffd45e;
+  filter: drop-shadow(0 0 5px rgba(255, 217, 122, 0.42));
+}
+
+.star::before {
+  left: 12px;
+}
+
+.star::after {
+  right: 12px;
 }
 
 .premium-avatar {
@@ -1458,8 +1508,8 @@ button.save-action {
 }
 
 .golden-dragon::after {
-  right: -12px;
-  top: 22px;
+  right: -22px;
+  top: 34px;
   width: 26px;
   height: 48px;
   border-radius: 50%;
@@ -1531,13 +1581,13 @@ button.save-action {
 }
 
 .sakura-kitsune::before {
-  left: 13px;
-  top: 10px;
-  width: 18px;
-  height: 18px;
+  left: 3px;
+  top: -2px;
+  width: 15px;
+  height: 15px;
   border-radius: 80% 20% 80% 20%;
   background: #ff9db4;
-  box-shadow: 72px 11px 0 rgba(255, 157, 180, 0.72), 38px -10px 0 rgba(255, 217, 122, 0.72);
+  box-shadow: 92px 10px 0 rgba(255, 157, 180, 0.62), 48px -8px 0 rgba(255, 217, 122, 0.62);
   animation: petal-drift 2.7s ease-in-out infinite;
 }
 
@@ -1681,13 +1731,19 @@ button.save-action {
 }
 
 .golden-dragon .snout::before {
-  top: -22px;
+  top: -30px;
   left: 50%;
   width: 42px;
-  height: 18px;
+  height: 14px;
   border-radius: 50%;
   background: repeating-linear-gradient(90deg, rgba(181, 118, 37, 0.5) 0 7px, transparent 8px 14px);
   transform: translateX(-50%);
+}
+
+.star .snout {
+  width: 34px;
+  height: 24px;
+  background: #fff8ee;
 }
 
 .golden-dragon .apron {
