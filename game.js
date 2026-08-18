@@ -5103,7 +5103,7 @@ function renderNotifications() {
         renderNotifications();
         return;
       }
-      joinGameInviteFromNotice(notice);
+      await joinGameInviteFromNotice(notice);
       playMenuSound();
     });
     const deleteButton = row.querySelector('[data-action="delete"]');
@@ -5158,7 +5158,7 @@ function showIncomingGameInvitePopupIfNeeded() {
   return true;
 }
 
-function joinGameInviteFromNotice(notice) {
+async function joinGameInviteFromNotice(notice) {
   if (!notice || !notice.id) return;
   const activeUser = getActiveUsername();
   if (!activeUser) return;
@@ -5177,7 +5177,7 @@ function joinGameInviteFromNotice(notice) {
       participants: Array.from(new Set([notice.sender, notice.recipient || activeUser].filter(Boolean))),
     });
   }
-  joinLobby(notice.id, activeUser);
+  await joinLobby(notice.id, activeUser);
   setActiveInviteId(notice.id);
   showScreen("waitingLobbyScreen");
 }
@@ -5317,8 +5317,9 @@ function renderWaitingLobby() {
   const needsInvite = viewerIsSender && (invite.declined || !invite.recipient);
   const readyFor = new Set(invite.readyFor || []);
   const participants = lobbyParticipants(invite);
+  const viewerJoined = (invite.joinedFor || []).includes(activeUser);
   const allReady = accepted && participants.length > 0 && participants.every((username) => readyFor.has(username));
-  const canReady = participants.includes(activeUser) && !needsInvite && (accepted || viewerIsSender);
+  const canReady = participants.includes(activeUser) && !needsInvite && (accepted || viewerIsSender || viewerJoined);
   document.querySelector("#lobbyInvitePlayer").hidden = !needsInvite;
   document.querySelector("#lobbyStatusText").textContent = needsInvite
     ? "Invite a player to play."
@@ -5404,7 +5405,7 @@ function handleLobbyPromptAction(lobbyId, action) {
   }
 }
 
-function joinLobby(lobbyId, username) {
+async function joinLobby(lobbyId, username) {
   const lobby = updateLobby(lobbyId, (candidate) => ({
     ...candidate,
     status: username === candidate.recipient ? "accepted" : candidate.status,
@@ -5417,9 +5418,13 @@ function joinLobby(lobbyId, username) {
   if (!lobby) return;
   setNotifications(getNotifications(username).filter((notice) => notice.id !== lobbyId), username);
   if (firebaseUser) {
-    deleteFirebaseNotification(firebaseUser.uid, lobbyId)
-      .then(refreshFirebaseSocialData)
-      .catch((error) => console.warn("Unable to clear lobby notification", error));
+    try {
+      await writeFirebaseLobby(lobby);
+      await deleteFirebaseNotification(firebaseUser.uid, lobbyId);
+      await refreshFirebaseSocialData();
+    } catch (error) {
+      console.warn("Unable to clear lobby notification", error);
+    }
   }
 }
 
@@ -6014,10 +6019,10 @@ document.querySelector("#inviteAddFriend").addEventListener("click", () => {
   showScreen("friendsScreen");
 });
 document.querySelector("#inviteAddFriend").addEventListener("click", playMenuSound);
-document.querySelector("#acceptIncomingGameInvite").addEventListener("click", () => {
+document.querySelector("#acceptIncomingGameInvite").addEventListener("click", async () => {
   const notice = getNotifications().find((candidate) => candidate.id === pendingIncomingGameInviteId) || pendingIncomingGameInvite();
   document.querySelector("#incomingGameInviteDialog").close();
-  if (notice) joinGameInviteFromNotice(notice);
+  if (notice) await joinGameInviteFromNotice(notice);
 });
 document.querySelector("#acceptIncomingGameInvite").addEventListener("click", playMenuSound);
 document.querySelector("#dismissIncomingGameInvite").addEventListener("click", () => {
