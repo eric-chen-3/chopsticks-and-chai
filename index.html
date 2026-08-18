@@ -263,8 +263,12 @@
           </div>
           <p class="store-balance" id="storeCoinBalance">0 <span class="coin-icon" aria-label="coin"></span></p>
           <p class="form-message" id="storeMessage"></p>
-          <div class="character-store" id="characterStore"></div>
-          <button class="save-character-button" id="saveCharacter" type="button">Save Character</button>
+          <section class="store-section" aria-labelledby="avatarStoreHeading">
+            <div class="store-section-heading">
+              <h2 id="avatarStoreHeading">Avatars</h2>
+            </div>
+            <div class="character-store" id="characterStore"></div>
+          </section>
           <button class="ghost-button" id="storeBack" type="button">Back</button>
         </div>
       </section>
@@ -377,6 +381,7 @@
                 <li>You win when both opposing hands are knocked out.</li>
                 <li>Splits must keep the same total number of chopsticks across your two hands.</li>
                 <li>You cannot split into the exact same hand values or simply inverse them, such as changing 3-1 into 1-3.</li>
+                <li>Each turn has a 30 second timer. If the timer reaches 0, that player forfeits and the other player wins.</li>
                 <li>Win streaks are tracked separately for Play vs AI difficulties and Play vs Friends modes.</li>
               </ul>
             </section>
@@ -492,6 +497,14 @@
         </section>
       </section>
 
+      <aside class="turn-timer-panel" id="turnTimerPanel" hidden>
+        <span class="turn-timer-label" id="turnTimerLabel">Turn Timer</span>
+        <strong id="turnTimerCount">30</strong>
+        <div class="turn-timer-bar" aria-hidden="true">
+          <span id="turnTimerFill"></span>
+        </div>
+      </aside>
+
       <dialog class="game-over" id="gameOverDialog">
         <form method="dialog">
           <div class="game-over-avatar" id="gameOverAvatar"></div>
@@ -555,6 +568,26 @@
         <form method="dialog">
           <div id="publicProfileContent"></div>
           <button class="ghost-button" value="close" type="submit">Close</button>
+        </form>
+      </dialog>
+
+      <dialog id="ownedAvatarDialog">
+        <form method="dialog">
+          <h2>Choose Avatar</h2>
+          <p class="form-message" id="ownedAvatarMessage"></p>
+          <div class="owned-avatar-grid" id="ownedAvatarGrid"></div>
+          <button class="ghost-button" id="closeOwnedAvatarDialog" value="close" type="button">Close</button>
+        </form>
+      </dialog>
+
+      <dialog id="purchaseAvatarDialog">
+        <form method="dialog">
+          <h2>Buy Avatar</h2>
+          <p id="purchaseAvatarText">Purchase this avatar?</p>
+          <div class="dialog-actions">
+            <button class="save-action" id="confirmPurchaseAvatar" value="buy" type="button">Yes</button>
+            <button class="ghost-button" id="cancelPurchaseAvatar" value="cancel" type="button">No</button>
+          </div>
         </form>
       </dialog>
 

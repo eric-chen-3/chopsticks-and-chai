@@ -40,6 +40,7 @@ const NOTIFICATIONS_KEY = "chopstickDuel.notifications";
 const MOCK_USERS_KEY = "chopstickDuel.mockUsers";
 const ACTIVE_USER_KEY = "chopstickDuel.activeUser";
 const ACTIVE_INVITE_KEY = "chopstickDuel.activeInvite";
+const ACTIVE_GAME_KEY = "chopstickDuel.activeGame";
 const LOBBIES_KEY = "chopstickDuel.lobbies";
 const SOUNDTRACK_PLAYLIST = [
   { id: "theGirlFromBoo", title: "The Girl From Boo", src: "/assets/audio/the-girl-from-boo.mp3", launchTrack: true },
@@ -70,6 +71,7 @@ const AI_WIN_COINS = {
   veryHard: 500,
 };
 const FORFEIT_SECONDS = 30;
+const TURN_TIMER_SECONDS = 30;
 const AUTH_TIMEOUT_MS = 15000;
 const AI_PLAYER_INDEX = 1;
 
@@ -169,6 +171,7 @@ let pendingHandleEdit = "";
 let pendingStartupBackScreen = "submodeScreen";
 let pendingIncomingGameInviteId = "";
 let forfeitTimerId = null;
+let turnTimerId = null;
 let pendingDeclineGameLobbyId = "";
 let forfeitTimerHidden = false;
 let firebaseUser = null;
@@ -315,6 +318,8 @@ function createGame() {
     lobbyId: pendingSubmode === "Separate Devices" ? activeInviteId() : null,
     playerCharacters: ["honeyBear", "mochiBunny"],
     playerWinStreaks: [0, 0],
+    turnStartedAt: Date.now(),
+    turnDeadlineAt: Date.now() + (TURN_TIMER_SECONDS * 1000),
     aiDifficulty: pendingSubmode === "Play vs AI" ? pendingAiDifficulty : null,
     saveId: null,
     rewardSummary: null,
@@ -344,9 +349,11 @@ function startNewGame() {
     startPowerTurn(currentPlayer(), false);
   }
   addLog("New game started. Player 1 goes first.");
+  resetTurnDeadline();
+  startTurnTimerLoop();
   showScreen("gameScreen");
   render();
-  syncActiveGameStateSoon();
+  syncActiveGameStateSoon(0);
   clearForfeitAbsence(getActiveUsername());
   updateForfeitTimer();
 }
@@ -501,7 +508,7 @@ function showScreen(screenId) {
   if (screenId === "waitingLobbyScreen") renderWaitingLobby();
   if (screenId === "aiDifficultyScreen") renderAiDifficultyOptions();
   if (screenId === "storeScreen") {
-    pendingCharacterId = getSelectedCharacter().id;
+    pendingCharacterId = "";
     document.querySelector("#storeMessage").textContent = "";
     renderCharacterStore();
   }
@@ -635,6 +642,7 @@ function attack(attackerHand, targetHand) {
   ]);
   checkWinner();
   render();
+  syncActiveGameStateSoon(0);
 }
 
 function applyHit(player, opponent, attackerHand, targetHand) {
@@ -674,6 +682,7 @@ function transferSplit(sourceHand, targetHand) {
   ]);
   checkSelfLoss();
   render();
+  syncActiveGameStateSoon(0);
 }
 
 function showSplitChoices() {
@@ -741,6 +750,7 @@ function applySplit(left, right) {
     { playerIndex: game.current, handIndex: 1 },
   ]);
   render();
+  syncActiveGameStateSoon(0);
 }
 
 function validSplit(player, left, right) {
@@ -958,10 +968,100 @@ function endTurn(options = {}) {
   game.selected = null;
   hideSplitChoices();
   startPowerTurn(currentPlayer());
+  resetTurnDeadline();
   markMissingCurrentTurnPlayerAbsent();
 
   addLog(`${currentPlayer().name}'s turn.`);
   render();
+  syncActiveGameStateSoon(0);
+}
+
+function resetTurnDeadline() {
+  if (!game || game.over) return;
+  game.turnStartedAt = Date.now();
+  game.turnDeadlineAt = game.turnStartedAt + (TURN_TIMER_SECONDS * 1000);
+}
+
+function ensureTurnDeadline() {
+  if (!game || game.over) return;
+  const deadline = Number(game.turnDeadlineAt) || 0;
+  if (deadline > 0) return;
+  resetTurnDeadline();
+}
+
+function turnTimerMsLeft() {
+  if (!game || game.over) return 0;
+  ensureTurnDeadline();
+  return Math.max(0, (Number(game.turnDeadlineAt) || 0) - Date.now());
+}
+
+function startTurnTimerLoop() {
+  if (turnTimerId) return;
+  turnTimerId = window.setInterval(updateTurnTimer, 250);
+}
+
+function stopTurnTimerLoop() {
+  if (turnTimerId) window.clearInterval(turnTimerId);
+  turnTimerId = null;
+  const panel = document.querySelector("#turnTimerPanel");
+  if (panel) panel.hidden = true;
+}
+
+function updateTurnTimer() {
+  const panel = document.querySelector("#turnTimerPanel");
+  if (!panel) return;
+  if (!game || game.over) {
+    stopTurnTimerLoop();
+    return;
+  }
+  const msLeft = turnTimerMsLeft();
+  const secondsLeft = Math.max(0, Math.ceil(msLeft / 1000));
+  const ratio = Math.max(0, Math.min(1, msLeft / (TURN_TIMER_SECONDS * 1000)));
+  panel.hidden = document.querySelector("#gameScreen").hidden;
+  panel.classList.toggle("low", secondsLeft <= 10 && secondsLeft > 5);
+  panel.classList.toggle("critical", secondsLeft <= 5);
+  document.querySelector("#turnTimerCount").textContent = String(secondsLeft);
+  document.querySelector("#turnTimerFill").style.width = `${ratio * 100}%`;
+  document.querySelector("#turnTimerLabel").textContent = `${currentPlayer().name}'s turn`;
+  updateLocalGamePromptTimer(secondsLeft);
+  if (secondsLeft <= 0) handleTurnTimerExpired();
+}
+
+function updateLocalGamePromptTimer(secondsLeft = null) {
+  const countdown = document.querySelector("#localGamePromptTimer");
+  if (!countdown || !game || game.over || game.submode === "Separate Devices") return;
+  const safeSeconds = secondsLeft === null ? Math.max(0, Math.ceil(turnTimerMsLeft() / 1000)) : secondsLeft;
+  countdown.textContent = `${safeSeconds}s`;
+  countdown.classList.toggle("low", safeSeconds <= 10 && safeSeconds > 5);
+  countdown.classList.toggle("critical", safeSeconds <= 5);
+}
+
+function handleTurnTimerExpired() {
+  if (!game || game.over) return;
+  const loserIndex = game.current;
+  const winnerIndex = opponentIndex();
+  const loser = currentPlayer().name;
+  addLog(`${loser} ran out of time.`);
+  game.players[loserIndex].hands = [0, 0];
+  game.over = true;
+  if (game.submode === "Separate Devices" && game.lobbyId) {
+    const timeoutGameState = JSON.parse(JSON.stringify({
+      ...game,
+      timeoutForfeit: true,
+      timeoutForfeitPlayer: loser,
+      syncedAt: Date.now(),
+    }));
+    updateLobby(game.lobbyId, (lobby) => ({
+      ...lobby,
+      status: "complete",
+      activeGame: false,
+      absentPlayers: {},
+      activeTurnPlayer: loser,
+      gameState: timeoutGameState,
+    }));
+  }
+  showScreen("gameScreen");
+  showGameOver(winnerIndex, loserIndex);
 }
 
 function checkWinner() {
@@ -983,6 +1083,8 @@ function checkSelfLoss() {
 async function showGameOver(winnerIndex, loserIndex) {
   const winner = game.players[winnerIndex];
   const loser = game.players[loserIndex];
+  stopTurnTimerLoop();
+  clearActiveGameState();
   await awardMatchRewardsAsync(winnerIndex, loserIndex);
   if (game.submode === "Separate Devices" && game.lobbyId) {
     updateLobby(game.lobbyId, (lobby) => ({ ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: null }));
@@ -1016,6 +1118,8 @@ function clearSelection() {
 
 function render() {
   if (!game) return;
+  ensureTurnDeadline();
+  startTurnTimerLoop();
   const player = currentPlayer();
   document.querySelector("#gameModeLabel").textContent = game.mode;
   document.querySelector(".turn-card small").textContent = displaySubmodeName(game.submode);
@@ -1035,8 +1139,8 @@ function render() {
   renderPlayer(1, document.querySelector("#player2Zone"), document.querySelector("#p2Hands"), document.querySelector("#p2Status"));
   renderPowerPanel();
   renderLog();
+  updateTurnTimer();
   updateForfeitTimer();
-  syncActiveGameStateSoon();
   scheduleAiMove();
 }
 
@@ -1195,6 +1299,7 @@ function playPendingCard() {
   finishPowerCardUse(cardId);
   playMenuSound();
   render();
+  syncActiveGameStateSoon(0);
 }
 
 function finishPowerCardUse(cardId) {
@@ -1264,6 +1369,7 @@ function applyRebalanceChoice(left, right) {
   addLog(`${player.name} plays ${powerCards[cardId].name}.`);
   playMenuSound();
   render();
+  syncActiveGameStateSoon(0);
 }
 
 function triggerEffect(type, hands) {
@@ -1777,7 +1883,7 @@ function requestReturnToMenu() {
     return;
   }
   if (game.submode === "Separate Devices") {
-    document.querySelector("#savePromptDialog p").textContent = "Returning to the menu will start a 30 second return timer. If it reaches 0 while it is your turn, it counts as a forfeit loss.";
+    document.querySelector("#savePromptDialog p").textContent = "Returning to the menu will keep the current turn timer running. If your turn reaches 0, it counts as a forfeit loss.";
     document.querySelector("#savePromptDialog").showModal();
     return;
   }
@@ -1790,9 +1896,12 @@ function confirmReturnToMenu() {
   clearAiMoveTimer();
   if (game && game.submode === "Separate Devices" && !game.over) {
     markGamePlayerLeft(getActiveUsername());
+  } else if (game && !game.over) {
+    persistActiveGameState();
   } else {
     closeGameLobbyForActivePlayer();
     game = null;
+    clearActiveGameState();
   }
   showScreen("mainMenuScreen");
 }
@@ -2935,12 +3044,14 @@ async function loadFirebaseProfile(user) {
   await ensureDailyCheckInQuest();
   startFirebaseDataListeners(user.uid);
   startPresenceHeartbeat();
+  if (restoreLocalActiveGameIfAvailable()) return profile;
   showScreen("mainMenuScreen");
   return profile;
 }
 
 async function signOutToLanding() {
   resetBackgroundMusicToLaunchTrack();
+  clearActiveGameState();
   resetSignedOutAuthView();
   previousScreen = "mainMenuScreen";
   if (firebaseUser) {
@@ -2994,6 +3105,7 @@ function applyFirebaseNotifications(notifications) {
       ? notice.createdAt.toDate().toISOString()
       : notice.createdAt || new Date().toISOString(),
   }));
+  cleanupStaleGameInviteNotifications();
 }
 
 function applyFirebaseLobbies(lobbies) {
@@ -3008,13 +3120,67 @@ function applyFirebaseLobbies(lobbies) {
       ? lobby.createdAt.toDate().toISOString()
       : lobby.createdAt || new Date().toISOString(),
   }));
+  cleanupStaleGameInviteNotifications();
+  maybeAutoEnterStartedLobby();
   const activeLobby = game && game.lobbyId
     ? firebaseLobbies.find((lobby) => lobby.id === game.lobbyId)
     : null;
-  if (activeLobby && activeLobby.gameState && activeLobby.gameState.syncedAt !== game.syncedAt && !canActiveAccountAct()) {
+  if (applyRemoteCompletedLobby(activeLobby)) return;
+  const remoteSyncedAt = Number(activeLobby && activeLobby.gameState && activeLobby.gameState.syncedAt) || 0;
+  const localSyncedAt = Number(game && game.syncedAt) || 0;
+  if (activeLobby && activeLobby.gameState && remoteSyncedAt > localSyncedAt && !canActiveAccountAct()) {
     game = JSON.parse(JSON.stringify(activeLobby.gameState));
     render();
   }
+}
+
+function applyRemoteCompletedLobby(lobby) {
+  if (!game || !lobby || game.over || lobby.status !== "complete") return false;
+  if (!lobby.gameState || !lobby.gameState.timeoutForfeit) return false;
+  const timedOutPlayer = lobby.gameState.timeoutForfeitPlayer || lobby.activeTurnPlayer || "";
+  const loserIndex = game.players.findIndex((player) => player.name === timedOutPlayer);
+  if (loserIndex === -1) return false;
+  const winnerIndex = loserIndex === 0 ? 1 : 0;
+  game.players[loserIndex].hands = [0, 0];
+  game.over = true;
+  showScreen("gameScreen");
+  showGameOver(winnerIndex, loserIndex);
+  return true;
+}
+
+function cleanupStaleGameInviteNotifications() {
+  if (!firebaseUser) return;
+  const activeUser = getActiveUsername();
+  if (!activeUser) return;
+  const now = Date.now();
+  const staleNotices = firebaseNotifications.filter((notice) => {
+    if (notice.type !== "gameInvite" || notice.sender === activeUser) return false;
+    const lobby = firebaseLobbies.find((candidate) => candidate.id === notice.id);
+    if (notice.status && notice.status !== "pending") return true;
+    if (lobby) {
+      if ((lobby.closedFor || []).includes(activeUser)) return true;
+      if (lobby.status === "declined" || lobby.status === "complete") return true;
+      if (isActiveGameLobby(lobby)) return true;
+      return false;
+    }
+    const createdAt = new Date(notice.createdAt || 0).getTime();
+    return Number.isFinite(createdAt) && createdAt > 0 && now - createdAt > 15000;
+  });
+  if (staleNotices.length === 0) return;
+  firebaseNotifications = firebaseNotifications.filter((notice) => !staleNotices.some((stale) => stale.id === notice.id));
+  staleNotices.forEach((notice) => {
+    deleteFirebaseNotification(firebaseUser.uid, notice.id).catch((error) => console.warn("Unable to clear stale game invite", error));
+  });
+}
+
+function maybeAutoEnterStartedLobby() {
+  const activeUser = getActiveUsername();
+  const lobbyId = activeInviteId();
+  if (!activeUser || !lobbyId || activeScreenId() !== "waitingLobbyScreen") return false;
+  const lobby = firebaseLobbies.find((candidate) => candidate.id === lobbyId);
+  if (!isActiveGameLobby(lobby) || !lobby.gameState || !lobbyParticipants(lobby).includes(activeUser)) return false;
+  if (game && game.lobbyId === lobbyId && !game.over) return false;
+  return restoreGameStateFromLobby(lobby);
 }
 
 function applyFirebaseSaves(saves) {
@@ -3225,7 +3391,7 @@ function updateLobby(id, updater) {
   const updated = updater(lobbies[index]);
   lobbies[index] = updated;
   setLobbies(lobbies);
-  if (activeInviteId() === id) setActiveInviteData(updated);
+  if (activeInviteId() === id) writeJson(ACTIVE_INVITE_KEY + ".data", updated);
   if (firebaseUser) {
     writeFirebaseLobby(updated).catch((error) => console.warn("Unable to update lobby", error));
   }
@@ -3265,11 +3431,48 @@ function activeGameLobby() {
   return game && game.lobbyId ? getLobbies().find((lobby) => lobby.id === game.lobbyId) : null;
 }
 
+function persistActiveGameState() {
+  if (!game || game.over) {
+    removeStorageKey(ACTIVE_GAME_KEY);
+    return;
+  }
+  writeJson(ACTIVE_GAME_KEY, JSON.parse(JSON.stringify({
+    ...game,
+    savedFor: getActiveUsername(),
+    savedAt: Date.now(),
+  })));
+}
+
+function clearActiveGameState() {
+  removeStorageKey(ACTIVE_GAME_KEY);
+}
+
+function restoreLocalActiveGameIfAvailable() {
+  const saved = readJson(ACTIVE_GAME_KEY, null);
+  const activeUser = getActiveUsername();
+  if (!saved || saved.over || saved.submode === "Separate Devices") {
+    clearActiveGameState();
+    return false;
+  }
+  const players = Array.isArray(saved.players) ? saved.players : [];
+  const belongsToActiveUser = !saved.savedFor || saved.savedFor === activeUser || players.some((player) => player && player.name === activeUser);
+  if (!belongsToActiveUser) return false;
+  game = JSON.parse(JSON.stringify(saved));
+  game.lobbyId = null;
+  ensureTurnDeadline();
+  if (!Array.isArray(game.playerWinStreaks)) applyGameWinStreaks();
+  startTurnTimerLoop();
+  showScreen("gameScreen");
+  render();
+  if (turnTimerMsLeft() <= 0) handleTurnTimerExpired();
+  return true;
+}
+
 function serializableGameState() {
   if (!game || game.submode !== "Separate Devices" || !game.lobbyId) return null;
+  game.syncedAt = Date.now();
   return JSON.parse(JSON.stringify({
     ...game,
-    syncedAt: Date.now(),
   }));
 }
 
@@ -3280,13 +3483,16 @@ function restoreGameStateFromLobby(lobby) {
   if (game.over) return false;
   applyGameCharacters();
   if (!Array.isArray(game.playerWinStreaks)) applyGameWinStreaks();
+  ensureTurnDeadline();
+  startTurnTimerLoop();
   clearForfeitAbsence(getActiveUsername());
   showScreen("gameScreen");
   render();
   return true;
 }
 
-function syncActiveGameStateSoon() {
+function syncActiveGameStateSoon(delay = 350) {
+  persistActiveGameState();
   if (!firebaseUser || !game || game.over || game.submode !== "Separate Devices" || !game.lobbyId) return;
   if (gameStateSyncTimer) window.clearTimeout(gameStateSyncTimer);
   gameStateSyncTimer = window.setTimeout(() => {
@@ -3301,7 +3507,7 @@ function syncActiveGameStateSoon() {
       lastGameStateAt: Date.now(),
       gameState,
     }));
-  }, 350);
+  }, delay);
 }
 
 function markGamePlayerLeft(username) {
@@ -4223,7 +4429,9 @@ function renderProfile() {
   const progress = profileProgress(username);
   const tag = profileTag(username);
   document.querySelector("#profileSummary").innerHTML = `
-    ${characterMarkup(getCharacterForUsername(username), "profile-avatar")}
+    <button class="profile-avatar-button" id="profileAvatarButton" type="button" aria-label="Change avatar">
+      ${characterMarkup(getCharacterForUsername(username), "profile-avatar")}
+    </button>
     <div class="profile-handle-row">
       ${profile ? `
         <button class="edit-profile-icon" data-edit="username" type="button" aria-label="Edit username">✎</button>
@@ -4234,6 +4442,11 @@ function renderProfile() {
       ` : ""}
     </div>
   `;
+  const profileAvatarButton = document.querySelector("#profileAvatarButton");
+  if (profileAvatarButton) {
+    profileAvatarButton.disabled = !profile;
+    profileAvatarButton.addEventListener("click", openOwnedAvatarDialog);
+  }
   document.querySelectorAll(".edit-profile-icon").forEach((button) => {
     button.addEventListener("click", () => openHandleEdit(button.dataset.edit));
   });
@@ -4782,10 +4995,14 @@ function markLobbyInviteDeclined(lobbyId, username) {
     declined: true,
     recipient: "",
     invitedFormer: username || lobby.recipient,
-    closedFor: Array.from(new Set([...(lobby.closedFor || []), username || lobby.recipient].filter(Boolean))),
+    closedFor: Array.from(new Set([...(lobby.closedFor || []), username || lobby.recipient, lobby.sender].filter(Boolean))),
     joinedFor: (lobby.joinedFor || []).filter((name) => name !== username && name !== lobby.recipient),
     readyFor: (lobby.readyFor || []).filter((name) => name !== username && name !== lobby.recipient),
   }));
+  if (activeInviteId() === lobbyId) {
+    setActiveInviteId("");
+    writeJson(ACTIVE_INVITE_KEY + ".data", null);
+  }
 }
 
 function addSystemNotification(username, title, text) {
@@ -5140,10 +5357,14 @@ function pendingIncomingGameInvite() {
   const activeUser = getActiveUsername();
   if (!activeUser) return null;
   return getNotifications()
-    .filter((notice) => notice.type === "gameInvite"
-      && notice.status !== "accepted"
-      && notice.sender !== activeUser
-      && (!notice.recipient || notice.recipient === activeUser))
+    .filter((notice) => {
+      if (notice.type !== "gameInvite" || notice.sender === activeUser || notice.status !== "pending") return false;
+      if (notice.recipient && notice.recipient !== activeUser) return false;
+      const lobby = getLobbies().find((candidate) => candidate.id === notice.id);
+      if (!lobby) return true;
+      if ((lobby.closedFor || []).includes(activeUser)) return false;
+      return lobby.status === "pending" && !isActiveGameLobby(lobby);
+    })
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0] || null;
 }
 
@@ -5346,6 +5567,26 @@ function renderActiveLobbyPrompts() {
   const username = getActiveUsername();
   const lobbies = activeLobbiesFor(username);
   container.replaceChildren();
+  const localGame = game && !game.over && game.submode !== "Separate Devices"
+    ? game
+    : readJson(ACTIVE_GAME_KEY, null);
+  if (localGame && !localGame.over && localGame.submode !== "Separate Devices" && (!localGame.savedFor || localGame.savedFor === username)) {
+    const secondsLeft = Math.max(0, Math.ceil(((Number(localGame.turnDeadlineAt) || 0) - Date.now()) / 1000));
+    const row = document.createElement("div");
+    row.className = "lobby-prompt local-game-prompt";
+    row.innerHTML = `
+      <strong>Return to ${displaySubmodeName(localGame.submode)}</strong>
+      <span>${localGame.mode || "Standard Mode"} · <strong class="local-game-prompt-timer" id="localGamePromptTimer">${secondsLeft}s</strong> on the turn timer</span>
+      <div class="lobby-prompt-actions">
+        <button class="save-action" data-action="return-local-game" type="button">Return</button>
+        <button class="overwrite-action" data-action="discard-local-game" type="button">Discard</button>
+      </div>
+    `;
+    row.querySelectorAll("button").forEach((button) => {
+      button.addEventListener("click", () => handleLocalGamePromptAction(button.dataset.action));
+    });
+    container.append(row);
+  }
   lobbies.forEach((lobby) => {
     const other = lobby.sender === username ? lobby.recipient : lobby.sender;
     const activeGame = isActiveGameLobby(lobby);
@@ -5365,6 +5606,17 @@ function renderActiveLobbyPrompts() {
     });
     container.append(row);
   });
+}
+
+function handleLocalGamePromptAction(action) {
+  if (action === "return-local-game") {
+    restoreLocalActiveGameIfAvailable();
+    return;
+  }
+  if (action === "discard-local-game") {
+    clearActiveGameState();
+    renderActiveLobbyPrompts();
+  }
 }
 
 function handleLobbyPromptAction(lobbyId, action) {
@@ -5620,10 +5872,30 @@ function setSelectedCharacter(id) {
   if (firebaseUser && firebaseProfile) {
     firebaseProfile = { ...firebaseProfile, selectedCharacterId: id };
     writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
-    updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => ({
-      ...remoteProfile,
-      selectedCharacterId: id,
-    })).catch((error) => console.warn("Unable to sync selected character", error));
+    updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+      const local = localProfileFromFirebaseData(remoteProfile, {
+        fallbackUsername: firebaseProfile.username,
+        fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+      });
+      const achievementStats = previousId !== id
+        ? addAchievementStats(local.achievementStats, { avatarChanges: 1 })
+        : local.achievementStats;
+      const achievementResult = awardEligibleAchievements(profileWithEconomy(local, {
+        selectedCharacterId: id,
+        achievementStats,
+      }), {});
+      return {
+        write: firebaseDocumentFromLocalProfile(achievementResult.profile),
+        result: { profile: achievementResult.profile, unlockedAchievements: achievementResult.unlocked },
+      };
+    }).then((result) => {
+      if (!result || !result.profile) return;
+      firebaseProfile = result.profile;
+      writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+      showAchievementUnlockToast(result.unlockedAchievements);
+      renderProfile();
+      renderSelectedCharacter();
+    }).catch((error) => console.warn("Unable to sync selected character", error));
   }
   writeAccountJson(CHARACTER_KEY, id);
   if (!firebaseUser && previousId !== id) {
@@ -5633,16 +5905,63 @@ function setSelectedCharacter(id) {
   renderCharacterStore();
 }
 
-async function saveSelectedCharacter() {
-  const characterId = pendingCharacterId || getSelectedCharacter().id;
+function openOwnedAvatarDialog() {
+  const dialog = document.querySelector("#ownedAvatarDialog");
+  if (!dialog) return;
+  document.querySelector("#ownedAvatarMessage").textContent = "Choose which owned avatar appears on your profile.";
+  renderOwnedAvatarGrid();
+  dialog.showModal();
+  playMenuSound();
+}
+
+function renderOwnedAvatarGrid() {
+  const grid = document.querySelector("#ownedAvatarGrid");
+  if (!grid) return;
+  const selected = getSelectedCharacter();
+  const owned = new Set(ownedCharacterIds());
+  grid.replaceChildren();
+  characters.filter((character) => owned.has(character.id)).forEach((character) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "character-card owned-avatar-card";
+    button.classList.add(`tier-${character.tier.toLowerCase()}`);
+    button.classList.toggle("selected", character.id === selected.id);
+    button.innerHTML = `
+      ${characterMarkup(character)}
+      <strong>${character.name}</strong>
+      <small>${character.id === selected.id ? "Current" : "Select"}</small>
+    `;
+    button.addEventListener("click", () => {
+      setSelectedCharacter(character.id);
+      document.querySelector("#ownedAvatarDialog").close();
+      playMenuSound();
+    });
+    grid.append(button);
+  });
+}
+
+function openPurchaseAvatarDialog(characterId) {
+  const character = characters.find((candidate) => candidate.id === characterId);
+  if (!character) return;
+  pendingCharacterId = characterId;
+  document.querySelector("#purchaseAvatarText").innerHTML = `Buy ${escapeHtml(character.name)} for ${coinAmountMarkup(characterPrice(characterId))}?`;
+  document.querySelector("#purchaseAvatarDialog").showModal();
+}
+
+async function purchaseCharacter(characterId = pendingCharacterId) {
   const character = characters.find((candidate) => candidate.id === characterId);
   if (!character) return false;
+  if (ownsCharacter(characterId)) {
+    document.querySelector("#storeMessage").textContent = `${character.name} is already owned. Change avatars from your Profile.`;
+    renderCharacterStore();
+    return false;
+  }
   if (!firebaseUser || !firebaseProfile) {
-    setSelectedCharacter(characterId);
+    document.querySelector("#storeMessage").textContent = "Log in to purchase avatars.";
     return true;
   }
   const currentEconomy = normalizeEconomy(firebaseProfile);
-  const price = ownsCharacter(characterId) ? 0 : characterPrice(characterId);
+  const price = characterPrice(characterId);
   if (currentEconomy.coins < price) {
     document.querySelector("#storeMessage").textContent = `You need ${coinAmountMarkup(price)} to unlock ${character.name}.`;
     return false;
@@ -5655,26 +5974,24 @@ async function saveSelectedCharacter() {
     const economy = normalizeEconomy(local);
     const owned = Array.from(new Set(["honeyBear", ...(local.ownedCharacterIds || [])]));
     const alreadyOwned = owned.includes(characterId);
-    const unlockPrice = alreadyOwned ? 0 : characterPrice(characterId);
-    if (economy.coins < unlockPrice) {
+    const purchasePrice = alreadyOwned ? 0 : characterPrice(characterId);
+    if (economy.coins < purchasePrice) {
       return {
         write: firebaseDocumentFromLocalProfile(local),
-        result: { ok: false, reason: "coins", required: unlockPrice, characterName: character.name },
+        result: { ok: false, reason: "coins", required: purchasePrice, characterName: character.name },
       };
     }
     const next = profileWithEconomy(local, {
-      coins: economy.coins - unlockPrice,
-      selectedCharacterId: characterId,
+      coins: economy.coins - purchasePrice,
       ownedCharacterIds: alreadyOwned ? owned : [...owned, characterId],
       achievementStats: addAchievementStats(local.achievementStats, {
-        avatarChanges: local.selectedCharacterId !== characterId ? 1 : 0,
-        totalCoinsSpent: unlockPrice,
+        totalCoinsSpent: purchasePrice,
       }),
     });
     const achievementResult = awardEligibleAchievements(next, {});
     return {
       write: firebaseDocumentFromLocalProfile(achievementResult.profile),
-      result: { ok: true, profile: achievementResult.profile, unlocked: !alreadyOwned, spent: unlockPrice, unlockedAchievements: achievementResult.unlocked },
+      result: { ok: true, profile: achievementResult.profile, unlocked: !alreadyOwned, spent: purchasePrice, unlockedAchievements: achievementResult.unlocked },
     };
   });
   if (!updated.ok) {
@@ -5683,12 +6000,11 @@ async function saveSelectedCharacter() {
   }
   firebaseProfile = updated.profile;
   writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
-  writeAccountJson(CHARACTER_KEY, characterId, firebaseProfile.username);
-  renderSelectedCharacter();
   renderCharacterStore();
+  showAchievementUnlockToast(updated.unlockedAchievements);
   document.querySelector("#storeMessage").textContent = updated.unlocked
-    ? `${character.name} unlocked and saved.`
-    : `${character.name} saved.`;
+    ? `${character.name} purchased. Change avatars from your Profile.`
+    : `${character.name} is already owned. Change avatars from your Profile.`;
   return true;
 }
 
@@ -5715,31 +6031,30 @@ function renderSelectedCharacter() {
 function renderCharacterStore() {
   const store = document.querySelector("#characterStore");
   if (!store) return;
-  const selected = getSelectedCharacter();
   const progress = profileProgress(getActiveUsername());
   document.querySelector("#storeCoinBalance").innerHTML = coinAmountMarkup(progress.coins);
-  if (!pendingCharacterId) pendingCharacterId = selected.id;
   store.replaceChildren();
-  characters.forEach((character, index) => {
-    const owned = ownsCharacter(character.id);
+  const availableCharacters = characters.filter((character) => !ownsCharacter(character.id));
+  if (availableCharacters.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "store-empty";
+    empty.textContent = "No avatars available right now.";
+    store.append(empty);
+    return;
+  }
+  availableCharacters.forEach((character) => {
     const price = characterPrice(character.id);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-card";
     button.classList.add(`tier-${character.tier.toLowerCase()}`);
-    button.classList.toggle("selected", character.id === pendingCharacterId);
-    button.classList.toggle("locked", !owned);
     button.innerHTML = `
       ${characterMarkup(character)}
       <strong>${character.name}</strong>
-      <small>${character.tier} | ${owned ? "Owned" : coinAmountMarkup(price)}</small>
+      <small>${character.tier} | ${coinAmountMarkup(price)}</small>
     `;
     button.addEventListener("click", () => {
-      pendingCharacterId = character.id;
-      document.querySelector("#storeMessage").innerHTML = owned
-        ? `${character.name} selected. Tap Save Character to keep it for ${getActiveUsername()}.`
-        : `${character.name} costs ${coinAmountMarkup(price)}. Tap Save Character to unlock it.`;
-      renderCharacterStore();
+      openPurchaseAvatarDialog(character.id);
       playMenuSound();
     });
     store.append(button);
@@ -5811,13 +6126,20 @@ document.querySelector("#storeBack").addEventListener("click", closeCollectionSc
 document.querySelector("#storeBack").addEventListener("click", playMenuSound);
 document.querySelector("#storeTopBack").addEventListener("click", closeCollectionScreen);
 document.querySelector("#storeTopBack").addEventListener("click", playMenuSound);
-document.querySelector("#saveCharacter").addEventListener("click", async () => {
-  if (await saveSelectedCharacter()) {
-    const character = characters.find((candidate) => candidate.id === (pendingCharacterId || getSelectedCharacter().id)) || getSelectedCharacter();
-    if (!firebaseUser) document.querySelector("#storeMessage").textContent = `Saved ${character.name} for ${getActiveUsername()}.`;
+document.querySelector("#confirmPurchaseAvatar").addEventListener("click", async () => {
+  if (await purchaseCharacter()) {
+    document.querySelector("#purchaseAvatarDialog").close();
   }
 });
-document.querySelector("#saveCharacter").addEventListener("click", playMenuSound);
+document.querySelector("#confirmPurchaseAvatar").addEventListener("click", playMenuSound);
+document.querySelector("#cancelPurchaseAvatar").addEventListener("click", () => {
+  document.querySelector("#purchaseAvatarDialog").close();
+});
+document.querySelector("#cancelPurchaseAvatar").addEventListener("click", playMenuSound);
+document.querySelector("#closeOwnedAvatarDialog").addEventListener("click", () => {
+  document.querySelector("#ownedAvatarDialog").close();
+});
+document.querySelector("#closeOwnedAvatarDialog").addEventListener("click", playMenuSound);
 document.querySelector("#friendsBack").addEventListener("click", () => showScreen("mainMenuScreen"));
 document.querySelector("#friendsBack").addEventListener("click", playMenuSound);
 document.querySelector("#openAddFriend").addEventListener("click", () => {
@@ -6094,6 +6416,7 @@ document.querySelector("#gameOverMenu").addEventListener("click", () => {
   clearAiMoveTimer();
   closeGameLobbyForActivePlayer();
   game = null;
+  clearActiveGameState();
   showScreen("mainMenuScreen");
 });
 document.querySelector("#gameOverMenu").addEventListener("click", playMenuSound);

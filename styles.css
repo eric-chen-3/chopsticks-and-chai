@@ -215,6 +215,29 @@ h2 {
   height: 19px;
 }
 
+.profile-avatar-button {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.profile-avatar-button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.profile-avatar-button:focus-visible {
+  outline: 3px solid var(--strawberry);
+  outline-offset: 5px;
+  border-radius: 24px;
+}
+
 #profileScreen .profile-summary,
 #profileScreen .level-panel,
 #profileScreen .achievement-panel {
@@ -512,6 +535,12 @@ h2 {
   background: rgba(255, 255, 255, 0.68);
 }
 
+.dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .save-action {
   background: #cfe9c9;
   box-shadow: 0 5px 0 rgba(83, 128, 75, 0.2);
@@ -653,6 +682,25 @@ button.save-action {
   z-index: 1;
 }
 
+.store-section {
+  display: grid;
+  gap: 9px;
+}
+
+.store-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.store-section-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
 .screen-back-icon {
   position: absolute;
   top: 12px;
@@ -722,6 +770,16 @@ button.save-action {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
   gap: 10px;
+}
+
+.store-empty {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+  font-weight: 850;
+  text-align: center;
 }
 
 .character-card {
@@ -796,6 +854,19 @@ button.save-action {
   width: 86px;
   height: 84px;
   animation-duration: 4.6s;
+}
+
+.owned-avatar-grid {
+  width: min(100%, 520px);
+  max-height: min(62vh, 520px);
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+}
+
+.owned-avatar-card {
+  min-height: 148px;
 }
 
 .character-card .ear {
@@ -3418,6 +3489,31 @@ button.save-action {
   gap: 6px;
 }
 
+.local-game-prompt-timer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #edf6ec;
+  color: #466b4c;
+  font-size: 0.82rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.local-game-prompt-timer.low {
+  background: #fff2bd;
+  color: #9a661a;
+}
+
+.local-game-prompt-timer.critical {
+  background: #ffd9c9;
+  color: #a63d3d;
+  animation: timer-warning 650ms ease-in-out infinite;
+}
+
 .lobby-prompt button {
   min-height: 34px;
   padding: 0 10px;
@@ -3802,9 +3898,88 @@ dialog form {
   box-shadow: 0 5px 0 rgba(66, 59, 53, 0.14);
 }
 
-.forfeit-timer-panel {
+.turn-timer-panel {
   position: fixed;
   right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 17;
+  width: 116px;
+  padding: 9px 10px 10px;
+  border: 1px solid rgba(66, 59, 53, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.92);
+  box-shadow: 0 10px 28px rgba(79, 63, 42, 0.16);
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  text-align: center;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.turn-timer-panel[hidden] {
+  display: none !important;
+}
+
+.turn-timer-panel.low {
+  background: rgba(255, 244, 203, 0.96);
+  box-shadow: 0 10px 28px rgba(184, 126, 32, 0.2);
+}
+
+.turn-timer-panel.critical {
+  background: rgba(255, 226, 215, 0.98);
+  box-shadow: 0 10px 30px rgba(197, 73, 73, 0.28);
+  transform: translateY(-2px);
+  animation: timer-warning 650ms ease-in-out infinite;
+}
+
+.turn-timer-label {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1.05;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#turnTimerCount {
+  color: var(--ink);
+  font-size: 1.72rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.turn-timer-bar {
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(91, 88, 109, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(91, 88, 109, 0.1);
+}
+
+.turn-timer-bar span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #78c98d, #ffd97a);
+  transition: width 180ms ease;
+}
+
+.turn-timer-panel.low .turn-timer-bar span {
+  background: linear-gradient(90deg, #ffd97a, #f4a35f);
+}
+
+.turn-timer-panel.critical .turn-timer-bar span {
+  background: linear-gradient(90deg, #f4a35f, #d93645);
+}
+
+.forfeit-timer-panel {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left));
   bottom: max(12px, env(safe-area-inset-bottom));
   z-index: 18;
   width: min(280px, calc(100vw - 24px));
@@ -3866,6 +4041,15 @@ dialog form {
 #forfeitTimerCount {
   justify-self: center;
   font-size: 2rem;
+}
+
+@keyframes timer-warning {
+  0%, 100% {
+    transform: translateY(-2px) scale(1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.035);
+  }
 }
 
 dialog input {
