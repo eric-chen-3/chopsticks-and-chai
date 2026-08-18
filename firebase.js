@@ -465,11 +465,42 @@ export async function sendFirebaseGameInvite(lobby, recipientUid) {
   }, { merge: true });
 }
 
-export async function writeFirebaseLobby(lobby) {
-  await setDoc(doc(db, "lobbies", lobby.id), {
-    ...sanitizeForFirestore(lobby),
+function firebaseLobbyDocument(lobby) {
+  return {
+    id: lobby.id,
+    type: lobby.type || "gameInvite",
+    title: lobby.title || "",
+    text: lobby.text || "",
+    sender: lobby.sender || "",
+    senderUid: lobby.senderUid || "",
+    senderTag: lobby.senderTag || "",
+    recipient: lobby.recipient || "",
+    recipientUid: lobby.recipientUid || "",
+    status: lobby.status || "pending",
+    unread: Boolean(lobby.unread),
+    createdAt: lobby.createdAt || "",
     updatedAt: serverTimestamp(),
-  }, { merge: true });
+    mode: lobby.mode || "",
+    activeGame: Boolean(lobby.activeGame),
+    activeTurnPlayer: lobby.activeTurnPlayer || "",
+    lastGameStateAt: lobby.lastGameStateAt || "",
+    participantUids: lobby.participantUids || [],
+    recipientCharacterId: lobby.recipientCharacterId || "",
+    senderCharacterId: lobby.senderCharacterId || "",
+    chat: lobby.chat || [],
+    closedFor: lobby.closedFor || [],
+    minimizedFor: lobby.minimizedFor || [],
+    joinedFor: lobby.joinedFor || [],
+    readyFor: lobby.readyFor || [],
+    declined: Boolean(lobby.declined),
+    inGameFor: lobby.inGameFor || [],
+    absentPlayers: lobby.absentPlayers || {},
+    gameState: lobby.gameState || null,
+  };
+}
+
+export async function writeFirebaseLobby(lobby) {
+  await setDoc(doc(db, "lobbies", lobby.id), sanitizeForFirestore(firebaseLobbyDocument(lobby)), { merge: true });
 }
 
 export async function deleteFirebaseLobby(lobbyId) {

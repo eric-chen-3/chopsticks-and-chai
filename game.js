@@ -5041,7 +5041,7 @@ async function sendGameInvite(friendId) {
       firebaseLobbies = [notification, ...firebaseLobbies.filter((lobby) => lobby.id !== notification.id)];
     } catch (error) {
       console.warn("Unable to send Firebase game invite", error);
-      showInviteStatusMessage("Unable to send invite. Please try again.");
+      showInviteStatusMessage(`Unable to send invite. ${authErrorMessage(error)}`);
       return;
     }
   } else {
