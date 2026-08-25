@@ -70,6 +70,14 @@ const AI_WIN_COINS = {
   hard: 50,
   veryHard: 500,
 };
+const CHAI_TEA_BOOST = {
+  id: "chaiTeaSpecial",
+  name: "Chai Tea Special",
+  price: 200,
+  durationMs: 30 * 60 * 1000,
+  expMultiplier: 1.5,
+  coinMultiplier: 1.25,
+};
 const FORFEIT_SECONDS = 30;
 const TURN_TIMER_SECONDS = 30;
 const AUTH_TIMEOUT_MS = 15000;
@@ -165,6 +173,7 @@ let pendingSubmode = "Pass and Play";
 let pendingInviteFriendId = "";
 let pendingInviteId = "";
 let pendingCharacterId = "";
+let pendingTeaId = "";
 let pendingRenameAccount = "";
 let pendingHostClosedNoticeId = "";
 let pendingHandleEdit = "";
@@ -172,6 +181,7 @@ let pendingStartupBackScreen = "submodeScreen";
 let pendingIncomingGameInviteId = "";
 let forfeitTimerId = null;
 let turnTimerId = null;
+let teaBoostTimerId = null;
 let pendingDeclineGameLobbyId = "";
 let forfeitTimerHidden = false;
 let firebaseUser = null;
@@ -239,7 +249,7 @@ const legalCopy = {
     title: "Support",
     paragraphs: [
       "For test builds, contact the developer directly with the email used for your test invite, your device model, and what happened.",
-      "Account deletion is available from the Profile screen when signed in. It removes your Firebase account, profile, saves, friends, notifications, active lobbies, and lobby messages that can be reached from your account.",
+      "Account deletion is available from Settings when signed in. It removes your Firebase account, profile, saves, friends, notifications, active lobbies, and lobby messages that can be reached from your account.",
       "A public support URL or support email should be added before TestFlight external testing.",
     ],
   },
@@ -495,6 +505,8 @@ function showScreen(screenId) {
   renderGlobalMockSwitcher();
   renderNotificationBadge();
   renderQuestBadge();
+  renderTeaBoostBadge();
+  startTeaBoostTimerLoop();
   if (screenId === "mainMenuScreen") {
     renderSelectedCharacter();
     renderActiveLobbyPrompts();
@@ -509,8 +521,10 @@ function showScreen(screenId) {
   if (screenId === "aiDifficultyScreen") renderAiDifficultyOptions();
   if (screenId === "storeScreen") {
     pendingCharacterId = "";
+    pendingTeaId = "";
     document.querySelector("#storeMessage").textContent = "";
     renderCharacterStore();
+    renderTeaStore();
   }
   if (screenId === "loadScreen") renderSaveList();
   if (screenId === "settingsScreen") renderSettings();
@@ -1091,14 +1105,14 @@ async function showGameOver(winnerIndex, loserIndex) {
   }
   const activeIndex = activePlayerIndex();
   const showLose = game.submode === "Separate Devices" && activeIndex === loserIndex;
-  const avatarName = showLose ? loser.name : winner.name;
-  const character = getCharacterForUsername(avatarName);
+  const viewedRewardName = showLose ? loser.name : winner.name;
+  const character = getPlayerCharacter(winnerIndex);
   const dialog = document.querySelector("#gameOverDialog");
   dialog.classList.toggle("lose", showLose);
   dialog.classList.toggle("win", !showLose);
   document.querySelector("#gameOverAvatar").innerHTML = characterMarkup(character, showLose ? "result-avatar sad" : "result-avatar");
   document.querySelector("#winnerTitle").textContent = showLose ? "You lost" : `${winner.name} wins`;
-  const viewedReward = game.submode === "Separate Devices" ? rewardForUsername(avatarName) : null;
+  const viewedReward = game.submode === "Separate Devices" ? rewardForUsername(viewedRewardName) : null;
   const streakText = !showLose ? winStreakText(winner.name) : "";
   document.querySelector("#winnerText").innerHTML = `${showLose
     ? `${escapeHtml(winner.name)} knocked both of your chopsticks down.`
@@ -1412,6 +1426,11 @@ function playSound(type) {
     return;
   }
 
+  if (type === "split") {
+    playFanSplit(context, volume);
+    return;
+  }
+
   if (type === "menu") {
     playTone(context, 620, 0, 0.035, volume * 0.08, "triangle");
     playTone(context, 840, 0.035, 0.045, volume * 0.07, "sine");
@@ -1716,6 +1735,49 @@ function playWoodClack(context, volume) {
   knock.stop(start + 0.09);
 }
 
+function playFanSplit(context, volume) {
+  const start = context.currentTime;
+  const sampleRate = context.sampleRate;
+  const duration = 0.22;
+  const buffer = context.createBuffer(1, Math.floor(sampleRate * duration), sampleRate);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < samples.length; i += 1) {
+    const progress = i / samples.length;
+    const flutter = Math.sin(progress * Math.PI * 18) * 0.35 + 0.65;
+    const fadeIn = Math.min(1, progress * 8);
+    const fadeOut = Math.pow(1 - progress, 1.4);
+    samples[i] = (Math.random() * 2 - 1) * flutter * fadeIn * fadeOut;
+  }
+
+  const sweep = context.createBufferSource();
+  const bandpass = context.createBiquadFilter();
+  const lowpass = context.createBiquadFilter();
+  const sweepGain = context.createGain();
+
+  sweep.buffer = buffer;
+  bandpass.type = "bandpass";
+  bandpass.frequency.setValueAtTime(900, start);
+  bandpass.frequency.exponentialRampToValueAtTime(1900, start + duration);
+  bandpass.Q.setValueAtTime(1.15, start);
+  lowpass.type = "lowpass";
+  lowpass.frequency.setValueAtTime(3200, start);
+  sweepGain.gain.setValueAtTime(0.0001, start);
+  sweepGain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * 0.11), start + 0.025);
+  sweepGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+  sweep.connect(bandpass);
+  bandpass.connect(lowpass);
+  lowpass.connect(sweepGain);
+  sweepGain.connect(context.destination);
+  sweep.start(start);
+  sweep.stop(start + duration);
+
+  [0.035, 0.115].forEach((delay, index) => {
+    playTone(context, index === 0 ? 360 : 420, delay, 0.045, volume * 0.06, "triangle");
+    playTone(context, index === 0 ? 170 : 210, delay + 0.012, 0.035, volume * 0.04, "sine");
+  });
+}
+
 function playVoice(context, options) {
   const start = context.currentTime + options.delay;
   const end = start + options.duration;
@@ -1895,7 +1957,8 @@ function requestReturnToMenu() {
 function confirmReturnToMenu() {
   clearAiMoveTimer();
   if (game && game.submode === "Separate Devices" && !game.over) {
-    markGamePlayerLeft(getActiveUsername());
+    forfeitActiveGameFor(getActiveUsername(), game.lobbyId);
+    return;
   } else if (game && !game.over) {
     persistActiveGameState();
   } else {
@@ -2140,6 +2203,7 @@ function defaultEconomy(overrides = {}) {
     level: 1,
     experience: 0,
     coins: 0,
+    boostActiveUntil: 0,
     winStreak: 0,
     modeWinStreaks: defaultModeWinStreaks(),
     totalWins: 0,
@@ -2281,6 +2345,7 @@ function normalizeEconomy(profile = {}) {
     level: Number.isFinite(profile.level) ? Math.max(1, Math.floor(profile.level)) : 1,
     experience: Number.isFinite(profile.experience) ? Math.max(0, Math.floor(profile.experience)) : 0,
     coins: Number.isFinite(profile.coins) ? Math.max(0, Math.floor(profile.coins)) : 0,
+    boostActiveUntil: Number.isFinite(profile.boostActiveUntil) ? Math.max(0, Math.floor(profile.boostActiveUntil)) : 0,
     winStreak: Math.max(legacyStreak, maxModeWinStreak(modeWinStreaks)),
     modeWinStreaks,
     totalWins: Number.isFinite(profile.totalWins) ? Math.max(0, Math.floor(profile.totalWins)) : 0,
@@ -2364,6 +2429,39 @@ function addExperience(profile, amount) {
     next.level += 1;
   }
   return next;
+}
+
+function activeTeaBoost(profile = getProfile()) {
+  const boostActiveUntil = normalizeEconomy(profile || {}).boostActiveUntil;
+  return boostActiveUntil > Date.now() ? { ...CHAI_TEA_BOOST, activeUntil: boostActiveUntil } : null;
+}
+
+function boostedRewardAmounts(profile, xp, coins) {
+  const boost = activeTeaBoost(profile);
+  if (!boost) {
+    return {
+      xp: Math.max(0, Math.round(xp)),
+      coins: Math.max(0, Math.round(coins)),
+      boostApplied: false,
+    };
+  }
+  return {
+    xp: Math.max(0, Math.round(xp * boost.expMultiplier)),
+    coins: Math.max(0, Math.round(coins * boost.coinMultiplier)),
+    boostApplied: true,
+  };
+}
+
+function teaBoostMsLeft(profile = getProfile()) {
+  const boost = activeTeaBoost(profile);
+  return boost ? Math.max(0, boost.activeUntil - Date.now()) : 0;
+}
+
+function teaBoostTimerText(msLeft) {
+  const totalSeconds = Math.max(0, Math.ceil(msLeft / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function streakBonusRate(streak) {
@@ -2451,8 +2549,11 @@ function applyMatchRewardToProfile(username, didWin, event = {}) {
   };
   const streakState = nextWinStreakState(current, didWin, event);
   const bonusRate = didWin ? streakBonusRate(streakState.nextStreak) : 0;
-  const xp = Math.round(matchBaseXp(event, current, didWin) * (1 + bonusRate));
-  const coins = didWin ? Math.round(matchWinCoins(event) * (1 + bonusRate)) : 0;
+  const baseXpBeforeBoost = Math.round(matchBaseXp(event, current, didWin) * (1 + bonusRate));
+  const baseCoinsBeforeBoost = didWin ? Math.round(matchWinCoins(event) * (1 + bonusRate)) : 0;
+  const boosted = boostedRewardAmounts(current, baseXpBeforeBoost, baseCoinsBeforeBoost);
+  const xp = boosted.xp;
+  const coins = boosted.coins;
   const allowAchievements = countsForAchievements(event);
   const updatedBeforeAchievements = addExperience({
     ...current,
@@ -2488,6 +2589,7 @@ function applyMatchRewardToProfile(username, didWin, event = {}) {
     coins: coins + achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0),
     baseXp: xp,
     baseCoins: coins,
+    boostApplied: boosted.boostApplied,
     unlockedAchievements: achievementResult.unlocked,
     winStreak: streakState.nextStreak,
     modeWinStreaks: updated.modeWinStreaks,
@@ -2518,8 +2620,11 @@ async function applyRewardToFirebaseProfile(username, didWin) {
     };
     const streakState = nextWinStreakState(current, didWin, event);
     const bonusRate = didWin ? streakBonusRate(streakState.nextStreak) : 0;
-    const xp = Math.round(matchBaseXp(event, current, didWin) * (1 + bonusRate));
-    const coins = didWin ? Math.round(matchWinCoins(event) * (1 + bonusRate)) : 0;
+    const baseXpBeforeBoost = Math.round(matchBaseXp(event, current, didWin) * (1 + bonusRate));
+    const baseCoinsBeforeBoost = didWin ? Math.round(matchWinCoins(event) * (1 + bonusRate)) : 0;
+    const boosted = boostedRewardAmounts(current, baseXpBeforeBoost, baseCoinsBeforeBoost);
+    const xp = boosted.xp;
+    const coins = boosted.coins;
     const allowAchievements = countsForAchievements(event);
     const updatedBeforeAchievements = addExperience({
       ...current,
@@ -2554,6 +2659,7 @@ async function applyRewardToFirebaseProfile(username, didWin) {
         coins: coins + achievementResult.unlocked.reduce((sum, achievement) => sum + achievement.coins, 0),
         baseXp: xp,
         baseCoins: coins,
+        boostApplied: boosted.boostApplied,
         unlockedAchievements: achievementResult.unlocked,
         winStreak: streakState.nextStreak,
         modeWinStreaks: updated.modeWinStreaks,
@@ -2891,7 +2997,7 @@ async function deleteSignedInFirebaseAccount() {
     clearFirebaseRuntimeData();
     game = null;
     document.querySelector("#deleteAccountDialog").close();
-    showScreen("profileScreen");
+    resetSignedOutAuthView();
     document.querySelector("#profileMessage").textContent = "Account deleted.";
     return true;
   } catch (error) {
@@ -3000,6 +3106,7 @@ function localProfileFromFirebaseData(remoteProfile, options = {}) {
     level: economy.level,
     experience: economy.experience,
     coins: economy.coins,
+    boostActiveUntil: economy.boostActiveUntil,
     winStreak: economy.winStreak,
     modeWinStreaks: economy.modeWinStreaks,
     totalWins: economy.totalWins,
@@ -3203,6 +3310,31 @@ function clearFirebaseRuntimeData() {
   firebaseUsernameUidMap = {};
   firebaseLobbyMessages = {};
   lobbyChatSubscriptionId = "";
+}
+
+function renderTeaBoostBadge() {
+  const badge = document.querySelector("#teaBoostBadge");
+  if (!badge) return;
+  const profile = firebaseProfile || getProfile();
+  const hasSignedInProfile = Boolean(firebaseUser && profile);
+  const msLeft = hasSignedInProfile ? teaBoostMsLeft(profile) : 0;
+  badge.hidden = msLeft <= 0;
+  if (msLeft <= 0) return;
+  document.querySelector("#teaBoostTimer").textContent = teaBoostTimerText(msLeft);
+  if (!document.querySelector("#storeScreen").hidden) renderTeaStore();
+}
+
+function startTeaBoostTimerLoop() {
+  if (teaBoostTimerId) return;
+  teaBoostTimerId = window.setInterval(() => {
+    renderTeaBoostBadge();
+    if (teaBoostMsLeft(firebaseProfile || getProfile()) <= 0) stopTeaBoostTimerLoop();
+  }, 1000);
+}
+
+function stopTeaBoostTimerLoop() {
+  if (teaBoostTimerId) window.clearInterval(teaBoostTimerId);
+  teaBoostTimerId = null;
 }
 
 function activeScreenId() {
@@ -3447,6 +3579,38 @@ function clearActiveGameState() {
   removeStorageKey(ACTIVE_GAME_KEY);
 }
 
+async function discardLocalActiveGame() {
+  const saved = readJson(ACTIVE_GAME_KEY, null);
+  const activeUser = getActiveUsername();
+  const activeLocalGame = game && !game.over && game.submode !== "Separate Devices"
+    ? game
+    : saved;
+
+  clearAiMoveTimer();
+  stopTurnTimerLoop();
+  clearActiveGameState();
+
+  if (!activeLocalGame || activeLocalGame.over || activeLocalGame.submode === "Separate Devices") {
+    game = null;
+    renderActiveLobbyPrompts();
+    return;
+  }
+
+  game = JSON.parse(JSON.stringify(activeLocalGame));
+  game.lobbyId = null;
+  const activeUserIndex = game.players.findIndex((player) => player.name === activeUser);
+  const loserIndex = game.submode === "Play vs AI" && activeUserIndex !== -1
+    ? activeUserIndex
+    : game.current;
+  const winnerIndex = loserIndex === 0 ? 1 : 0;
+  if (game.players[loserIndex]) game.players[loserIndex].hands = [0, 0];
+  game.over = true;
+  game.timeoutForfeit = true;
+  await awardMatchRewardsAsync(winnerIndex, loserIndex);
+  game = null;
+  renderActiveLobbyPrompts();
+}
+
 function restoreLocalActiveGameIfAvailable() {
   const saved = readJson(ACTIVE_GAME_KEY, null);
   const activeUser = getActiveUsername();
@@ -3608,6 +3772,11 @@ function forfeitActiveGameFor(username, lobbyId) {
   const targetLobbyId = lobbyId || (game && game.lobbyId);
   if (!targetLobbyId || !username) return;
   setActiveInviteId(targetLobbyId);
+  const lobby = getLobbies().find((candidate) => candidate.id === targetLobbyId);
+  if ((!game || game.lobbyId !== targetLobbyId) && lobby && lobby.gameState) {
+    game = JSON.parse(JSON.stringify(lobby.gameState));
+    game.lobbyId = targetLobbyId;
+  }
   if (!game || game.lobbyId !== targetLobbyId || game.over) {
     updateLobby(targetLobbyId, (lobby) => ({ ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: null }));
     renderActiveLobbyPrompts();
@@ -3967,12 +4136,12 @@ async function claimQuestReward(type, questId) {
     const next = applyQuestProgressToProfile(withReward, { coinsEarned: quest.coins });
     return {
       write: firebaseDocumentFromLocalProfile(next),
-      result: next,
+      result: { profile: next, claimedQuest: quest },
     };
   });
-  firebaseProfile = updated;
+  firebaseProfile = updated.profile || updated;
   writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
-  showQuestClaimToast(quest);
+  showQuestClaimToast(updated.claimedQuest || quest);
   renderQuests();
   renderProfile();
   renderQuestBadge();
@@ -4489,6 +4658,9 @@ function resetSignedOutAuthView() {
   authFlowMode = "landing";
   pendingCreateAccount = null;
   removeStorageKey(ACTIVE_USER_KEY);
+  stopTeaBoostTimerLoop();
+  const badge = document.querySelector("#teaBoostBadge");
+  if (badge) badge.hidden = true;
   document.querySelector("#loginEmail").value = "";
   document.querySelector("#loginPassword").value = "";
   document.querySelector("#createPassword").value = "";
@@ -5608,14 +5780,13 @@ function renderActiveLobbyPrompts() {
   });
 }
 
-function handleLocalGamePromptAction(action) {
+async function handleLocalGamePromptAction(action) {
   if (action === "return-local-game") {
     restoreLocalActiveGameIfAvailable();
     return;
   }
   if (action === "discard-local-game") {
-    clearActiveGameState();
-    renderActiveLobbyPrompts();
+    await discardLocalActiveGame();
   }
 }
 
@@ -5851,9 +6022,14 @@ function characterPrice(characterId) {
     imperialPhoenix: 550,
   };
   if (Object.hasOwn(priceOverrides, characterId)) return priceOverrides[characterId];
-  const index = characters.findIndex((character) => character.id === characterId);
-  if (index <= 0) return 0;
-  return 50 + (index * 25);
+  const tierPrices = {
+    Common: 100,
+    Rare: 225,
+    Epic: 350,
+    Deluxe: 425,
+  };
+  const character = characters.find((candidate) => candidate.id === characterId);
+  return character ? tierPrices[character.tier] || 0 : 0;
 }
 
 function ownedCharacterIds() {
@@ -6001,6 +6177,7 @@ async function purchaseCharacter(characterId = pendingCharacterId) {
   firebaseProfile = updated.profile;
   writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
   renderCharacterStore();
+  renderTeaStore();
   showAchievementUnlockToast(updated.unlockedAchievements);
   document.querySelector("#storeMessage").textContent = updated.unlocked
     ? `${character.name} purchased. Change avatars from your Profile.`
@@ -6010,13 +6187,15 @@ async function purchaseCharacter(characterId = pendingCharacterId) {
 
 function characterMarkup(character, extraClass = "") {
   return `
-    <div class="character-avatar ${character.className} ${extraClass}" aria-hidden="true">
-      <span class="ear left"></span>
-      <span class="ear right"></span>
-      <span class="snout"></span>
-      <span class="blush left"></span>
-      <span class="blush right"></span>
-      <span class="apron"></span>
+    <div class="avatar-frame ${extraClass}" aria-hidden="true">
+      <div class="character-avatar ${character.className}">
+        <span class="ear left"></span>
+        <span class="ear right"></span>
+        <span class="snout"></span>
+        <span class="blush left"></span>
+        <span class="blush right"></span>
+        <span class="apron"></span>
+      </div>
     </div>
   `;
 }
@@ -6136,6 +6315,16 @@ document.querySelector("#cancelPurchaseAvatar").addEventListener("click", () => 
   document.querySelector("#purchaseAvatarDialog").close();
 });
 document.querySelector("#cancelPurchaseAvatar").addEventListener("click", playMenuSound);
+document.querySelector("#confirmPurchaseTea").addEventListener("click", async () => {
+  if (await purchaseTea()) {
+    document.querySelector("#purchaseTeaDialog").close();
+  }
+});
+document.querySelector("#confirmPurchaseTea").addEventListener("click", playMenuSound);
+document.querySelector("#cancelPurchaseTea").addEventListener("click", () => {
+  document.querySelector("#purchaseTeaDialog").close();
+});
+document.querySelector("#cancelPurchaseTea").addEventListener("click", playMenuSound);
 document.querySelector("#closeOwnedAvatarDialog").addEventListener("click", () => {
   document.querySelector("#ownedAvatarDialog").close();
 });
@@ -6362,6 +6551,11 @@ document.querySelector("#resetSettings").addEventListener("click", () => {
   renderSettings();
 });
 document.querySelector("#resetSettings").addEventListener("click", playMenuSound);
+document.querySelector("#settingsDeleteAccount").addEventListener("click", () => {
+  document.querySelector("#deleteAccountMessage").textContent = "";
+  document.querySelector("#deleteAccountDialog").showModal();
+});
+document.querySelector("#settingsDeleteAccount").addEventListener("click", playMenuSound);
 document.querySelector("#settingsSignOut").addEventListener("click", async () => {
   await signOutToLanding();
 });
@@ -6507,6 +6701,92 @@ function renderAiDifficultyOptions() {
   document.querySelectorAll(".ai-difficulty").forEach((button) => {
     button.classList.toggle("active", button.dataset.aiDifficulty === pendingAiDifficulty);
   });
+}
+
+function teaIconMarkup(extraClass = "") {
+  return `<span class="chai-tea-icon ${extraClass}" aria-hidden="true"><span></span></span>`;
+}
+
+function openPurchaseTeaDialog(teaId) {
+  if (teaId !== CHAI_TEA_BOOST.id) return;
+  pendingTeaId = teaId;
+  document.querySelector("#purchaseTeaText").innerHTML = `Buy ${escapeHtml(CHAI_TEA_BOOST.name)} for ${coinAmountMarkup(CHAI_TEA_BOOST.price)}?<br><small>Grants 30 minutes of +50% EXP and +25% coin gains from match rewards only.</small>`;
+  document.querySelector("#purchaseTeaDialog").showModal();
+}
+
+async function purchaseTea(teaId = pendingTeaId) {
+  if (teaId !== CHAI_TEA_BOOST.id) return false;
+  if (!firebaseUser || !firebaseProfile) {
+    document.querySelector("#storeMessage").textContent = "Log in to purchase teas.";
+    return false;
+  }
+  const currentEconomy = normalizeEconomy(firebaseProfile);
+  if (currentEconomy.coins < CHAI_TEA_BOOST.price) {
+    document.querySelector("#storeMessage").textContent = `You need ${coinAmountMarkup(CHAI_TEA_BOOST.price)} to buy ${CHAI_TEA_BOOST.name}.`;
+    return false;
+  }
+  const updated = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    const economy = normalizeEconomy(local);
+    if (economy.coins < CHAI_TEA_BOOST.price) {
+      return {
+        write: firebaseDocumentFromLocalProfile(local),
+        result: { ok: false, reason: "coins" },
+      };
+    }
+    const activeUntil = Math.max(Date.now(), economy.boostActiveUntil || 0) + CHAI_TEA_BOOST.durationMs;
+    const next = profileWithEconomy(local, {
+      coins: economy.coins - CHAI_TEA_BOOST.price,
+      boostActiveUntil: activeUntil,
+      achievementStats: addAchievementStats(local.achievementStats, {
+        totalCoinsSpent: CHAI_TEA_BOOST.price,
+      }),
+    });
+    const achievementResult = awardEligibleAchievements(next, {});
+    return {
+      write: firebaseDocumentFromLocalProfile(achievementResult.profile),
+      result: { ok: true, profile: achievementResult.profile, unlockedAchievements: achievementResult.unlocked },
+    };
+  });
+  if (!updated.ok) {
+    document.querySelector("#storeMessage").textContent = `You need ${coinAmountMarkup(CHAI_TEA_BOOST.price)} to buy ${CHAI_TEA_BOOST.name}.`;
+    return false;
+  }
+  firebaseProfile = updated.profile;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  document.querySelector("#storeCoinBalance").innerHTML = coinAmountMarkup(normalizeEconomy(firebaseProfile).coins);
+  renderTeaStore();
+  renderCharacterStore();
+  renderTeaBoostBadge();
+  startTeaBoostTimerLoop();
+  showAchievementUnlockToast(updated.unlockedAchievements);
+  document.querySelector("#storeMessage").textContent = `${CHAI_TEA_BOOST.name} activated for ${teaBoostTimerText(teaBoostMsLeft(firebaseProfile))}.`;
+  return true;
+}
+
+function renderTeaStore() {
+  const store = document.querySelector("#teaStore");
+  if (!store) return;
+  const progress = profileProgress(getActiveUsername());
+  document.querySelector("#storeCoinBalance").innerHTML = coinAmountMarkup(progress.coins);
+  const boost = activeTeaBoost(firebaseProfile || getProfile());
+  store.replaceChildren();
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "character-card tea-card";
+  button.innerHTML = `
+    ${teaIconMarkup()}
+    <strong>${CHAI_TEA_BOOST.name}</strong>
+    <small>${boost ? `Active ${teaBoostTimerText(teaBoostMsLeft(firebaseProfile))} left | ` : ""}Match rewards only | ${coinAmountMarkup(CHAI_TEA_BOOST.price)}</small>
+  `;
+  button.addEventListener("click", () => {
+    openPurchaseTeaDialog(CHAI_TEA_BOOST.id);
+    playMenuSound();
+  });
+  store.append(button);
 }
 
 function playMenuSound() {

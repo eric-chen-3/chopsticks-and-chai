@@ -10,6 +10,12 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <aside class="tea-boost-badge" id="teaBoostBadge" hidden aria-live="polite">
+      <span class="chai-tea-icon small" aria-hidden="true">
+        <span></span>
+      </span>
+      <strong id="teaBoostTimer">30:00</strong>
+    </aside>
     <main class="app-shell">
       <section class="mock-switcher" id="globalMockSwitcher" aria-label="Account" hidden>
         <span id="globalMockAccountLabel">Mock: you</span>
@@ -42,14 +48,15 @@
             <span></span>
           </div>
           <div class="mascot-wrap">
-            <div class="menu-mascot character-avatar bear" id="menuMascot" aria-hidden="true">
-              <span class="ear left"></span>
-              <span class="ear right"></span>
-              <span class="face"></span>
-              <span class="snout"></span>
-              <span class="blush left"></span>
-              <span class="blush right"></span>
-              <span class="apron"></span>
+            <div class="avatar-frame menu-mascot" id="menuMascot" aria-hidden="true">
+              <div class="character-avatar bear">
+                <span class="ear left"></span>
+                <span class="ear right"></span>
+                <span class="snout"></span>
+                <span class="blush left"></span>
+                <span class="blush right"></span>
+                <span class="apron"></span>
+              </div>
             </div>
           </div>
           <h1>Chopsticks &amp; Chai</h1>
@@ -269,6 +276,12 @@
             </div>
             <div class="character-store" id="characterStore"></div>
           </section>
+          <section class="store-section" aria-labelledby="teaStoreHeading">
+            <div class="store-section-heading">
+              <h2 id="teaStoreHeading">Teas</h2>
+            </div>
+            <div class="tea-store" id="teaStore"></div>
+          </section>
           <button class="ghost-button" id="storeBack" type="button">Back</button>
         </div>
       </section>
@@ -352,6 +365,7 @@
           </div>
           <div class="menu-actions">
             <button id="resetSettings" type="button">Reset Settings</button>
+            <button class="overwrite-action" id="settingsDeleteAccount" type="button">Delete Account</button>
             <button class="danger-action" id="settingsSignOut" type="button">Sign Out</button>
             <button class="ghost-button" id="settingsBack" type="button">Back</button>
           </div>
@@ -591,6 +605,17 @@
         </form>
       </dialog>
 
+      <dialog id="purchaseTeaDialog">
+        <form method="dialog">
+          <h2>Buy Tea</h2>
+          <p id="purchaseTeaText">Purchase this tea?</p>
+          <div class="dialog-actions">
+            <button class="save-action" id="confirmPurchaseTea" value="buy" type="button">Yes</button>
+            <button class="ghost-button" id="cancelPurchaseTea" value="cancel" type="button">No</button>
+          </div>
+        </form>
+      </dialog>
+
       <dialog id="savePromptDialog">
         <form method="dialog">
           <h2>Return to Main Menu?</h2>
@@ -736,7 +761,7 @@
       <dialog id="deleteAccountDialog">
         <form method="dialog">
           <h2>Delete Account</h2>
-          <p>This permanently deletes your account, profile, saves, friends, notifications, and active lobbies from Firebase.</p>
+          <p>This permanently deletes your account and all saved data. This action cannot be undone.</p>
           <p class="form-message" id="deleteAccountMessage"></p>
           <button class="overwrite-action" id="confirmDeleteFirebaseAccount" value="delete" type="button">Delete Account</button>
           <button class="ghost-button" value="cancel" type="submit">Back</button>
