@@ -31,7 +31,8 @@ service cloud.firestore {
     function validUserProfile() {
       return request.resource.data.keys().hasOnly([
           "createdAt", "updatedAt", "email", "username", "tag", "selectedCharacterId",
-          "ownedCharacterIds", "economy", "achievements", "achievementStats", "questState", "verified", "presence"
+          "ownedCharacterIds", "economy", "achievements", "achievementStats", "questState",
+          "inventory", "levelRewardsClaimed", "verified", "presence"
         ])
         && optionalString(request.resource.data, "email", 120)
         && optionalString(request.resource.data, "username", 18)
@@ -41,7 +42,9 @@ service cloud.firestore {
         && optionalList(request.resource.data, "ownedCharacterIds", 40)
         && optionalList(request.resource.data, "achievements", 40)
         && optionalMap(request.resource.data, "achievementStats")
-        && optionalMap(request.resource.data, "questState");
+        && optionalMap(request.resource.data, "questState")
+        && optionalMap(request.resource.data, "inventory")
+        && optionalList(request.resource.data, "levelRewardsClaimed", 50);
     }
 
     function validFriend() {
@@ -108,6 +111,18 @@ service cloud.firestore {
         && request.resource.data.username.size() <= 18;
     }
 
+    function validAuditLog() {
+      return request.resource.data.keys().hasOnly([
+          "type", "username", "summary", "metadata", "clientCreatedAt", "createdAt"
+        ])
+        && request.resource.data.type is string
+        && request.resource.data.type.size() <= 80
+        && optionalString(request.resource.data, "username", 18)
+        && optionalString(request.resource.data, "summary", 240)
+        && optionalString(request.resource.data, "clientCreatedAt", 40)
+        && optionalMap(request.resource.data, "metadata");
+    }
+
     function validLobby() {
       return request.resource.data.keys().hasOnly([
           "id", "type", "title", "text", "sender", "senderUid", "senderTag",
@@ -160,6 +175,11 @@ service cloud.firestore {
       match /notifications/{notificationId} {
         allow read, update, delete: if isUser(userId);
         allow create: if signedIn() && validNotification();
+      }
+
+      match /auditLogs/{auditLogId} {
+        allow read: if isUser(userId);
+        allow create: if isUser(userId) && validAuditLog();
       }
     }
 

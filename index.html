@@ -36,6 +36,15 @@
             </svg>
             <span id="questBadge" aria-hidden="true" hidden>!</span>
           </button>
+          <button class="icon-button inventory-corner" id="menuInventory" type="button" aria-label="Cafe Inventory">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M5 9.5c.45-1.2 1.6-2 3-2h8c1.4 0 2.55.8 3 2l1.2 9.5a2 2 0 0 1-2 2H5.8a2 2 0 0 1-2-2L5 9.5Z"></path>
+              <path d="M8.5 8.2A3.5 3.5 0 0 1 12 4.5a3.5 3.5 0 0 1 3.5 3.7"></path>
+              <path d="M8.5 13.5h7"></path>
+              <path d="M9.5 17h5"></path>
+            </svg>
+            <span id="inventoryBadge" aria-hidden="true" hidden>!</span>
+          </button>
           <button class="icon-button settings-corner" id="menuSettings" type="button" aria-label="Settings">
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
@@ -74,6 +83,16 @@
 
       <section class="menu-screen" id="profileScreen" hidden>
         <div class="menu-card">
+          <button class="profile-progress-icon" id="openPlayerProgression" type="button" aria-label="Player Progression">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 6.5C10.5 5.25 8.45 4.5 5 4.5v13c3.45 0 5.5.75 7 2V6.5Z"></path>
+              <path d="M12 6.5c1.5-1.25 3.55-2 7-2v13c-3.45 0-5.5.75-7 2V6.5Z"></path>
+              <path d="M8 8.5h1.8"></path>
+              <path d="M14.2 8.5H16"></path>
+              <path d="M8 12h1.8"></path>
+              <path d="M14.2 12H16"></path>
+            </svg>
+          </button>
           <p class="eyebrow">Profile</p>
           <h1>Chopsticks &amp; Chai</h1>
           <p class="form-message" id="profileMessage"></p>
@@ -153,6 +172,42 @@
             <button class="overwrite-action" id="deleteFirebaseAccount" type="button" hidden>Delete Account</button>
             <button class="ghost-button" id="profileBack" type="button">Back</button>
           </div>
+        </div>
+      </section>
+
+      <section class="menu-screen progression-screen" id="progressionScreen" hidden>
+        <div class="menu-card store-card">
+          <button class="screen-back-icon" id="progressionTopBack" type="button" aria-label="Back">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M15 18l-6-6 6-6"></path>
+            </svg>
+          </button>
+          <div class="screen-heading-offset">
+            <p class="eyebrow">Player Progression</p>
+            <h1>Level Rewards</h1>
+          </div>
+          <p class="form-message" id="progressionMessage"></p>
+          <div class="progression-timeline-wrap">
+            <div class="progression-timeline" id="progressionTimeline"></div>
+          </div>
+          <button class="ghost-button" id="progressionBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="menu-screen inventory-screen" id="inventoryScreen" hidden>
+        <div class="menu-card store-card">
+          <button class="screen-back-icon" id="inventoryTopBack" type="button" aria-label="Back">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M15 18l-6-6 6-6"></path>
+            </svg>
+          </button>
+          <div class="screen-heading-offset">
+            <p class="eyebrow">Cafe Inventory</p>
+            <h1>Inventory</h1>
+          </div>
+          <p class="form-message" id="inventoryMessage"></p>
+          <div class="inventory-grid" id="inventoryGrid"></div>
+          <button class="ghost-button" id="inventoryBack" type="button">Back</button>
         </div>
       </section>
 

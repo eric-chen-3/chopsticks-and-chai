@@ -530,6 +530,18 @@ export async function sendFirebaseLobbyMessage(lobbyId, message) {
   });
 }
 
+export async function logFirebaseAuditEvent(uid, event = {}) {
+  if (!uid || !event.type) return;
+  await addDoc(collection(db, "users", uid, "auditLogs"), {
+    type: String(event.type).slice(0, 80),
+    username: String(event.username || "").slice(0, 18),
+    summary: String(event.summary || "").slice(0, 240),
+    metadata: sanitizeForFirestore(event.metadata || {}),
+    clientCreatedAt: new Date().toISOString(),
+    createdAt: serverTimestamp(),
+  });
+}
+
 export async function acceptFirebaseFriendRequest(currentUid, currentProfile, notice) {
   const now = serverTimestamp();
   await setDoc(doc(db, "users", currentUid, "friends", notice.senderUid), {

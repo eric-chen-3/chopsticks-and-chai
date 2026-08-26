@@ -10,6 +10,7 @@ import {
   listLobbiesForUser,
   listNotifications,
   listSaves,
+  logFirebaseAuditEvent,
   loadUserProfile,
   removeFirebaseFriend,
   sendFirebaseLobbyMessage,
@@ -43,11 +44,7 @@ const ACTIVE_INVITE_KEY = "chopstickDuel.activeInvite";
 const ACTIVE_GAME_KEY = "chopstickDuel.activeGame";
 const LOBBIES_KEY = "chopstickDuel.lobbies";
 const SOUNDTRACK_PLAYLIST = [
-  { id: "theGirlFromBoo", title: "The Girl From Boo", src: "/assets/audio/the-girl-from-boo.mp3", launchTrack: true },
-  { id: "specialFeature", title: "special feature", src: "/assets/audio/special-feature.mp3" },
-  { id: "ceilingInstrumental", title: "Ceiling (Instrumental Version)", src: "/assets/audio/ceiling-instrumental.mp3" },
-  { id: "skyline", title: "Skyline", src: "/assets/audio/skyline.mp3" },
-  { id: "lushHour", title: "Lush Hour", src: "/assets/audio/lush-hour.mp3" },
+  { id: "skyline", title: "Skyline", src: "/assets/audio/skyline.mp3", launchTrack: true },
 ];
 const ECONOMY_RESET_KEY = "chopstickDuel.economyReset.v1";
 const SLEEPY_PANDA_RESET_KEY = "chopstickDuel.sleepyPandaReset.v1";
@@ -78,6 +75,29 @@ const CHAI_TEA_BOOST = {
   expMultiplier: 1.5,
   coinMultiplier: 1.25,
 };
+const MAX_LEVEL = 50;
+const levelRewards = [
+  { level: 3, coins: 50, items: {} },
+  { level: 5, coins: 100, items: { chaiTeaSpecial: 1 } },
+  { level: 8, coins: 100, items: {} },
+  { level: 10, coins: 175, items: { chaiTeaSpecial: 1 } },
+  { level: 13, coins: 175, items: {} },
+  { level: 15, coins: 275, items: { chaiTeaSpecial: 1 } },
+  { level: 18, coins: 275, items: {} },
+  { level: 20, coins: 400, items: { chaiTeaSpecial: 1 } },
+  { level: 23, coins: 400, items: {} },
+  { level: 25, coins: 550, items: { chaiTeaSpecial: 2 } },
+  { level: 28, coins: 550, items: {} },
+  { level: 30, coins: 725, items: { chaiTeaSpecial: 2 } },
+  { level: 33, coins: 700, items: {} },
+  { level: 35, coins: 925, items: { chaiTeaSpecial: 2 } },
+  { level: 38, coins: 825, items: {} },
+  { level: 40, coins: 1150, items: { chaiTeaSpecial: 2 } },
+  { level: 43, coins: 925, items: {} },
+  { level: 45, coins: 1400, items: { chaiTeaSpecial: 3 } },
+  { level: 48, coins: 1000, items: {} },
+  { level: 50, coins: 2000, items: { chaiTeaSpecial: 3 } },
+];
 const FORFEIT_SECONDS = 30;
 const TURN_TIMER_SECONDS = 30;
 const AUTH_TIMEOUT_MS = 15000;
@@ -366,6 +386,13 @@ function startNewGame() {
   syncActiveGameStateSoon(0);
   clearForfeitAbsence(getActiveUsername());
   updateForfeitTimer();
+  auditUserAction("match_started", `Started ${game.mode} / ${displaySubmodeName(game.submode)} match.`, {
+    mode: game.mode,
+    submode: game.submode,
+    aiDifficulty: game.aiDifficulty || "",
+    lobbyId: game.lobbyId || "",
+    players: game.players.map((player) => player.name),
+  });
 }
 
 function beginGameFlow(backScreen = "submodeScreen") {
@@ -498,13 +525,14 @@ function maxLiveChopsticks() {
 }
 
 function showScreen(screenId) {
-  ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "aiDifficultyScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"].forEach((id) => {
+  ["mainMenuScreen", "profileScreen", "progressionScreen", "inventoryScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "aiDifficultyScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"].forEach((id) => {
     document.querySelector(`#${id}`).hidden = id !== screenId;
   });
   document.querySelector("#gameMenuDropdown").hidden = true;
   renderGlobalMockSwitcher();
   renderNotificationBadge();
   renderQuestBadge();
+  renderInventoryBadge();
   renderTeaBoostBadge();
   startTeaBoostTimerLoop();
   if (screenId === "mainMenuScreen") {
@@ -513,6 +541,8 @@ function showScreen(screenId) {
     window.setTimeout(showIncomingGameInvitePopupIfNeeded, 0);
   }
   if (screenId === "profileScreen") renderProfile();
+  if (screenId === "progressionScreen") renderProgression();
+  if (screenId === "inventoryScreen") renderInventory();
   if (screenId === "friendsScreen") renderFriends();
   if (screenId === "notificationsScreen") renderNotifications();
   if (screenId === "achievementsScreen") renderAchievements();
@@ -1099,7 +1129,27 @@ async function showGameOver(winnerIndex, loserIndex) {
   const loser = game.players[loserIndex];
   stopTurnTimerLoop();
   clearActiveGameState();
-  await awardMatchRewardsAsync(winnerIndex, loserIndex);
+  const rewards = await awardMatchRewardsAsync(winnerIndex, loserIndex);
+  auditUserAction("match_completed", `${winner.name} won a ${game.mode} / ${displaySubmodeName(game.submode)} match.`, {
+    mode: game.mode,
+    submode: game.submode,
+    aiDifficulty: game.aiDifficulty || "",
+    lobbyId: game.lobbyId || "",
+    winner: winner.name,
+    loser: loser.name,
+    timeoutForfeit: Boolean(game.timeoutForfeit),
+    winnerIndex,
+    loserIndex,
+    rewards: Array.isArray(rewards) ? rewards.map((reward) => ({
+      username: reward.username,
+      didWin: reward.didWin,
+      xp: reward.xp,
+      coins: reward.coins,
+      baseXp: reward.baseXp,
+      baseCoins: reward.baseCoins,
+      boostApplied: Boolean(reward.boostApplied),
+    })) : [],
+  });
   if (game.submode === "Separate Devices" && game.lobbyId) {
     updateLobby(game.lobbyId, (lobby) => ({ ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: null }));
   }
@@ -1195,8 +1245,8 @@ function renderPlayer(index, zone, handsEl, statusEl) {
       ${streakBadge}
     </button>
   `;
-  title.querySelector(".battle-profile-button").addEventListener("click", () => openPublicProfile(player.name));
-  eyebrow.onclick = () => openPublicProfile(player.name);
+  title.querySelector(".battle-profile-button").addEventListener("click", () => openPublicProfile(player.name, { character: getPlayerCharacter(index) }));
+  eyebrow.onclick = () => openPublicProfile(player.name, { character: getPlayerCharacter(index) });
   handsEl.replaceChildren();
 
   player.hands.forEach((value, handIndex) => {
@@ -1587,7 +1637,7 @@ function getBackgroundMusic() {
   rebuildBackgroundMusicQueue(!backgroundMusicHasStarted);
   backgroundMusicHasStarted = true;
   backgroundMusic = new Audio();
-  backgroundMusic.loop = false;
+  backgroundMusic.loop = SOUNDTRACK_PLAYLIST.length === 1;
   backgroundMusic.preload = "auto";
   backgroundMusic.addEventListener("ended", playNextBackgroundTrack);
   loadCurrentBackgroundTrack();
@@ -1957,9 +2007,20 @@ function requestReturnToMenu() {
 function confirmReturnToMenu() {
   clearAiMoveTimer();
   if (game && game.submode === "Separate Devices" && !game.over) {
+    auditUserAction("match_forfeited", `${getActiveUsername()} forfeited a Play vs Friends match.`, {
+      mode: game.mode,
+      submode: game.submode,
+      lobbyId: game.lobbyId || "",
+    });
     forfeitActiveGameFor(getActiveUsername(), game.lobbyId);
     return;
   } else if (game && !game.over) {
+    auditUserAction("match_left", `${getActiveUsername()} left an active ${game.mode} / ${displaySubmodeName(game.submode)} match for the main menu.`, {
+      mode: game.mode,
+      submode: game.submode,
+      aiDifficulty: game.aiDifficulty || "",
+      lobbyId: game.lobbyId || "",
+    });
     persistActiveGameState();
   } else {
     closeGameLobbyForActivePlayer();
@@ -2212,6 +2273,16 @@ function defaultEconomy(overrides = {}) {
   };
 }
 
+function defaultInventory(overrides = {}) {
+  const consumables = overrides.consumables && typeof overrides.consumables === "object" ? overrides.consumables : {};
+  return {
+    consumables: {
+      chaiTeaSpecial: Number.isFinite(consumables.chaiTeaSpecial) ? Math.max(0, Math.floor(consumables.chaiTeaSpecial)) : 0,
+    },
+    hasNewItems: Boolean(overrides.hasNewItems),
+  };
+}
+
 const modeWinStreakLabels = {
   standardAiEasy: { label: "Standard / Play vs AI Easy", shortLabel: "SAI-E" },
   standardAiMedium: { label: "Standard / Play vs AI Medium", shortLabel: "SAI-M" },
@@ -2341,9 +2412,10 @@ function defaultQuestState(overrides = {}) {
 function normalizeEconomy(profile = {}) {
   const modeWinStreaks = normalizeModeWinStreaks(profile.modeWinStreaks);
   const legacyStreak = Number.isFinite(profile.winStreak) ? Math.max(0, Math.floor(profile.winStreak)) : 0;
+  const safeLevel = Number.isFinite(profile.level) ? Math.max(1, Math.min(MAX_LEVEL, Math.floor(profile.level))) : 1;
   return defaultEconomy({
-    level: Number.isFinite(profile.level) ? Math.max(1, Math.floor(profile.level)) : 1,
-    experience: Number.isFinite(profile.experience) ? Math.max(0, Math.floor(profile.experience)) : 0,
+    level: safeLevel,
+    experience: Number.isFinite(profile.experience) && safeLevel < MAX_LEVEL ? Math.max(0, Math.floor(profile.experience)) : 0,
     coins: Number.isFinite(profile.coins) ? Math.max(0, Math.floor(profile.coins)) : 0,
     boostActiveUntil: Number.isFinite(profile.boostActiveUntil) ? Math.max(0, Math.floor(profile.boostActiveUntil)) : 0,
     winStreak: Math.max(legacyStreak, maxModeWinStreak(modeWinStreaks)),
@@ -2351,6 +2423,18 @@ function normalizeEconomy(profile = {}) {
     totalWins: Number.isFinite(profile.totalWins) ? Math.max(0, Math.floor(profile.totalWins)) : 0,
     totalLosses: Number.isFinite(profile.totalLosses) ? Math.max(0, Math.floor(profile.totalLosses)) : 0,
   });
+}
+
+function normalizeInventory(profile = {}) {
+  return defaultInventory(profile.inventory || {});
+}
+
+function normalizeClaimedLevelRewards(profile = {}) {
+  return Array.isArray(profile.levelRewardsClaimed)
+    ? profile.levelRewardsClaimed
+      .map((level) => Number(level))
+      .filter((level, index, list) => Number.isInteger(level) && level >= 1 && level <= MAX_LEVEL && list.indexOf(level) === index)
+    : [];
 }
 
 function normalizeAchievementStats(profile = {}) {
@@ -2418,15 +2502,26 @@ function profileWithEconomy(profile, overrides = {}) {
     achievements: normalizeAchievements(merged),
     achievementStats: normalizeAchievementStats(merged),
     questState: normalizeQuestState(merged),
+    inventory: normalizeInventory(merged),
+    levelRewardsClaimed: normalizeClaimedLevelRewards(merged),
   };
 }
 
 function addExperience(profile, amount) {
   const next = profileWithEconomy(profile);
+  if (next.level >= MAX_LEVEL) {
+    next.level = MAX_LEVEL;
+    next.experience = 0;
+    return next;
+  }
   next.experience += Math.max(0, Math.floor(amount));
-  while (next.experience >= levelRequirement(next.level)) {
+  while (next.level < MAX_LEVEL && next.experience >= levelRequirement(next.level)) {
     next.experience -= levelRequirement(next.level);
     next.level += 1;
+  }
+  if (next.level >= MAX_LEVEL) {
+    next.level = MAX_LEVEL;
+    next.experience = 0;
   }
   return next;
 }
@@ -2462,6 +2557,83 @@ function teaBoostTimerText(msLeft) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function inventoryQuantity(profile = getProfile(), itemId = CHAI_TEA_BOOST.id) {
+  return normalizeInventory(profile || {}).consumables[itemId] || 0;
+}
+
+function addConsumableToProfile(profile, itemId, quantity = 1) {
+  const current = profileWithEconomy(profile);
+  const inventory = normalizeInventory(current);
+  const amount = Math.max(0, Math.floor(quantity));
+  if (!amount) return current;
+  return profileWithEconomy(current, {
+    inventory: {
+      ...inventory,
+      consumables: {
+        ...inventory.consumables,
+        [itemId]: (inventory.consumables[itemId] || 0) + amount,
+      },
+      hasNewItems: true,
+    },
+  });
+}
+
+function consumeConsumableFromProfile(profile, itemId, quantity = 1) {
+  const current = profileWithEconomy(profile);
+  const inventory = normalizeInventory(current);
+  const amount = Math.max(1, Math.floor(quantity));
+  const owned = inventory.consumables[itemId] || 0;
+  if (owned < amount) return null;
+  return profileWithEconomy(current, {
+    inventory: {
+      ...inventory,
+      consumables: {
+        ...inventory.consumables,
+        [itemId]: owned - amount,
+      },
+    },
+  });
+}
+
+function markInventorySeen(profile) {
+  const current = profileWithEconomy(profile);
+  const inventory = normalizeInventory(current);
+  return profileWithEconomy(current, {
+    inventory: {
+      ...inventory,
+      hasNewItems: false,
+    },
+  });
+}
+
+function levelRewardFor(level) {
+  return levelRewards.find((reward) => reward.level === level) || null;
+}
+
+function levelRewardLabel(reward) {
+  if (!reward) return "No reward";
+  const parts = [];
+  if (reward.coins) parts.push(coinAmountMarkup(reward.coins));
+  const teaCount = reward.items && reward.items.chaiTeaSpecial ? reward.items.chaiTeaSpecial : 0;
+  if (teaCount) parts.push(`${teaCount} ${CHAI_TEA_BOOST.name}${teaCount === 1 ? "" : "s"}`);
+  return parts.join(" + ");
+}
+
+function levelRewardText(reward) {
+  if (!reward) return "No reward";
+  const parts = [];
+  if (reward.coins) parts.push(`${reward.coins} coins`);
+  const teaCount = reward.items && reward.items.chaiTeaSpecial ? reward.items.chaiTeaSpecial : 0;
+  if (teaCount) parts.push(`${teaCount} ${CHAI_TEA_BOOST.name}${teaCount === 1 ? "" : "s"}`);
+  return parts.join(" + ");
+}
+
+function claimableLevelRewards(profile = getProfile()) {
+  const current = profileWithEconomy(profile || {});
+  const claimed = new Set(normalizeClaimedLevelRewards(current));
+  return levelRewards.filter((reward) => current.level >= reward.level && !claimed.has(reward.level));
 }
 
 function streakBonusRate(streak) {
@@ -3058,6 +3230,16 @@ function getActiveUsername() {
   return getStoredActiveUsername();
 }
 
+function auditUserAction(type, summary, metadata = {}) {
+  if (!firebaseUser || !type) return;
+  logFirebaseAuditEvent(firebaseUser.uid, {
+    type,
+    username: getActiveUsername(),
+    summary,
+    metadata,
+  }).catch((error) => console.warn("Unable to write audit log", error));
+}
+
 function setActiveUsername(username) {
   const previousUsername = getActiveUsername();
   if (game && !game.over && game.submode === "Separate Devices" && !document.querySelector("#gameScreen").hidden && previousUsername && previousUsername !== username) {
@@ -3069,6 +3251,7 @@ function setActiveUsername(username) {
   document.body.classList.toggle("reduce-motion", getSettings().reduceMotion);
   renderGlobalMockSwitcher();
   renderNotificationBadge();
+  renderInventoryBadge();
   renderSelectedCharacter();
   if (showLobbyClosedPopupIfNeeded()) return;
   if (!getProfile(username)) {
@@ -3114,6 +3297,8 @@ function localProfileFromFirebaseData(remoteProfile, options = {}) {
     achievements: Array.isArray(remoteProfile.achievements) ? remoteProfile.achievements : [],
     achievementStats,
     questState: remoteProfile.questState || {},
+    inventory: remoteProfile.inventory || {},
+    levelRewardsClaimed: remoteProfile.levelRewardsClaimed || [],
   });
 }
 
@@ -3121,6 +3306,7 @@ function firebaseDocumentFromLocalProfile(profile) {
   const economy = normalizeEconomy(profile || {});
   const achievementStats = normalizeAchievementStats(profile || {});
   const questState = normalizeQuestState(profile || {});
+  const inventory = normalizeInventory(profile || {});
   return {
     username: profile.username,
     tag: normalizeTag(profile.tag || generateTag()),
@@ -3131,6 +3317,8 @@ function firebaseDocumentFromLocalProfile(profile) {
     achievements: normalizeAchievements(profile || {}),
     achievementStats,
     questState,
+    inventory,
+    levelRewardsClaimed: normalizeClaimedLevelRewards(profile || {}),
     verified: true,
   };
 }
@@ -3338,7 +3526,7 @@ function stopTeaBoostTimerLoop() {
 }
 
 function activeScreenId() {
-  return ["mainMenuScreen", "profileScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"]
+  return ["mainMenuScreen", "profileScreen", "progressionScreen", "inventoryScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"]
     .find((id) => !document.querySelector(`#${id}`).hidden) || "unknown";
 }
 
@@ -3397,8 +3585,11 @@ function subscribeToActiveLobbyChat() {
 
 function refreshCurrentScreenFromFirebaseData() {
   renderNotificationBadge();
+  renderInventoryBadge();
   if (!document.querySelector("#friendsScreen").hidden) renderFriends();
   if (!document.querySelector("#notificationsScreen").hidden) renderNotifications();
+  if (!document.querySelector("#progressionScreen").hidden) renderProgression();
+  if (!document.querySelector("#inventoryScreen").hidden) renderInventory();
   if (!document.querySelector("#waitingLobbyScreen").hidden) renderWaitingLobby();
   if (!document.querySelector("#loadScreen").hidden) renderSaveList();
   if (!document.querySelector("#mainMenuScreen").hidden) {
@@ -3969,7 +4160,7 @@ function profileProgress(username) {
   return {
     level: economy.level,
     exp: economy.experience,
-    next: levelRequirement(economy.level),
+    next: economy.level >= MAX_LEVEL ? 0 : levelRequirement(economy.level),
     coins: economy.coins,
     winStreak: economy.winStreak,
     modeWinStreaks: economy.modeWinStreaks,
@@ -4108,6 +4299,13 @@ async function claimQuestReward(type, questId) {
     const updated = applyQuestProgressToProfile(withReward, { coinsEarned: quest.coins });
     setProfile(updated, username);
     showQuestClaimToast(quest);
+    auditUserAction("reward_claimed", `Claimed ${quest.title} quest reward.`, {
+      rewardType: "quest",
+      questType: type,
+      questId,
+      exp: quest.exp,
+      coins: quest.coins,
+    });
     renderQuests();
     renderProfile();
     renderQuestBadge();
@@ -4142,9 +4340,171 @@ async function claimQuestReward(type, questId) {
   firebaseProfile = updated.profile || updated;
   writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
   showQuestClaimToast(updated.claimedQuest || quest);
+  auditUserAction("reward_claimed", `Claimed ${quest.title} quest reward.`, {
+    rewardType: "quest",
+    questType: type,
+    questId,
+    exp: quest.exp,
+    coins: quest.coins,
+  });
   renderQuests();
   renderProfile();
   renderQuestBadge();
+}
+
+async function claimLevelReward(level) {
+  const reward = levelRewardFor(Number(level));
+  const username = getActiveUsername();
+  if (!reward || !username) return;
+  if (!firebaseUser || !firebaseProfile) {
+    const profile = getProfile(username);
+    const current = profileWithEconomy(profile || {});
+    const claimed = new Set(normalizeClaimedLevelRewards(current));
+    if (current.level < reward.level || claimed.has(reward.level)) return;
+    let next = profileWithEconomy(current, {
+      coins: current.coins + reward.coins,
+      levelRewardsClaimed: [...claimed, reward.level],
+      achievementStats: addAchievementStats(current.achievementStats, {
+        totalCoinsEarned: reward.coins,
+      }),
+    });
+    Object.entries(reward.items || {}).forEach(([itemId, quantity]) => {
+      next = addConsumableToProfile(next, itemId, quantity);
+    });
+    const achievementResult = awardEligibleAchievements(next, {});
+    next = achievementResult.profile;
+    setProfile(next, username);
+    showLevelRewardToast(reward);
+    auditUserAction("reward_claimed", `Claimed level ${reward.level} reward.`, {
+      rewardType: "level",
+      level: reward.level,
+      coins: reward.coins,
+      items: reward.items || {},
+    });
+    renderProgression();
+    renderInventoryBadge();
+    renderProfile();
+    return;
+  }
+  const updated = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    const current = profileWithEconomy(local);
+    const claimed = new Set(normalizeClaimedLevelRewards(current));
+    if (current.level < reward.level || claimed.has(reward.level)) {
+      return {
+        write: firebaseDocumentFromLocalProfile(current),
+        result: { profile: current, claimed: false },
+      };
+    }
+    let next = profileWithEconomy(current, {
+      coins: current.coins + reward.coins,
+      levelRewardsClaimed: [...claimed, reward.level],
+      achievementStats: addAchievementStats(current.achievementStats, {
+        totalCoinsEarned: reward.coins,
+      }),
+    });
+    Object.entries(reward.items || {}).forEach(([itemId, quantity]) => {
+      next = addConsumableToProfile(next, itemId, quantity);
+    });
+    const achievementResult = awardEligibleAchievements(next, {});
+    return {
+      write: firebaseDocumentFromLocalProfile(achievementResult.profile),
+      result: { profile: achievementResult.profile, claimed: true, reward, unlockedAchievements: achievementResult.unlocked },
+    };
+  });
+  firebaseProfile = updated.profile;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  if (updated.claimed) {
+    showLevelRewardToast(updated.reward);
+    auditUserAction("reward_claimed", `Claimed level ${updated.reward.level} reward.`, {
+      rewardType: "level",
+      level: updated.reward.level,
+      coins: updated.reward.coins,
+      items: updated.reward.items || {},
+    });
+  }
+  renderProgression();
+  renderInventoryBadge();
+  renderProfile();
+}
+
+async function useChaiTeaSpecial() {
+  const username = getActiveUsername();
+  if (!username) return;
+  if (!firebaseUser || !firebaseProfile) {
+    const current = profileWithEconomy(getProfile(username) || {});
+    const consumed = consumeConsumableFromProfile(current, CHAI_TEA_BOOST.id);
+    if (!consumed) {
+      document.querySelector("#inventoryMessage").textContent = "You do not have a Chai Tea Special yet.";
+      return;
+    }
+    const economy = normalizeEconomy(consumed);
+    const updated = profileWithEconomy(consumed, {
+      boostActiveUntil: Math.max(Date.now(), economy.boostActiveUntil || 0) + CHAI_TEA_BOOST.durationMs,
+    });
+    setProfile(updated, username);
+    document.querySelector("#inventoryMessage").textContent = `${CHAI_TEA_BOOST.name} activated for 30:00.`;
+    auditUserAction("consumable_used", `Used ${CHAI_TEA_BOOST.name}.`, {
+      itemId: CHAI_TEA_BOOST.id,
+      durationMs: CHAI_TEA_BOOST.durationMs,
+    });
+    renderInventory();
+    renderTeaBoostBadge();
+    startTeaBoostTimerLoop();
+    return;
+  }
+  const updated = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    const consumed = consumeConsumableFromProfile(local, CHAI_TEA_BOOST.id);
+    if (!consumed) {
+      return {
+        write: firebaseDocumentFromLocalProfile(local),
+        result: { profile: local, ok: false },
+      };
+    }
+    const economy = normalizeEconomy(consumed);
+    const next = profileWithEconomy(consumed, {
+      boostActiveUntil: Math.max(Date.now(), economy.boostActiveUntil || 0) + CHAI_TEA_BOOST.durationMs,
+    });
+    return {
+      write: firebaseDocumentFromLocalProfile(next),
+      result: { profile: next, ok: true },
+    };
+  });
+  firebaseProfile = updated.profile;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  document.querySelector("#inventoryMessage").textContent = updated.ok
+    ? `${CHAI_TEA_BOOST.name} activated for 30:00.`
+    : "You do not have a Chai Tea Special yet.";
+  if (updated.ok) {
+    auditUserAction("consumable_used", `Used ${CHAI_TEA_BOOST.name}.`, {
+      itemId: CHAI_TEA_BOOST.id,
+      durationMs: CHAI_TEA_BOOST.durationMs,
+    });
+  }
+  renderInventory();
+  renderTeaStore();
+  renderTeaBoostBadge();
+  startTeaBoostTimerLoop();
+}
+
+function showLevelRewardToast(reward) {
+  if (!reward) return;
+  showAchievementUnlockToast([{
+    title: `Level ${reward.level} reward claimed`,
+    exp: 0,
+    coins: reward.coins,
+  }]);
+  const title = document.querySelector("#achievementToastTitle");
+  const names = document.querySelector("#achievementToastNames");
+  if (title) title.textContent = "Level Reward";
+  if (names) names.textContent = `Level ${reward.level}: ${levelRewardText(reward)}`;
 }
 
 function achievementById(id) {
@@ -4309,9 +4669,138 @@ function renderQuests() {
   renderQuestBadge();
 }
 
+function rewardIconMarkup(reward, claimed) {
+  if (!reward) return '<span class="level-dot" aria-hidden="true"></span>';
+  const hasTea = Boolean(reward.items && reward.items.chaiTeaSpecial);
+  const icon = hasTea
+    ? teaIconMarkup("small")
+    : `<span class="level-coin-icon">${coinIconMarkup()}</span>`;
+  return `
+    <span class="level-reward-icon" aria-hidden="true">
+      ${icon}
+      ${claimed ? '<span class="reward-check">✓</span>' : ""}
+    </span>
+  `;
+}
+
+function renderProgression() {
+  const timeline = document.querySelector("#progressionTimeline");
+  if (!timeline) return;
+  const profile = profileWithEconomy(getProfile() || {});
+  const claimed = new Set(normalizeClaimedLevelRewards(profile));
+  timeline.replaceChildren();
+  for (let level = 1; level <= MAX_LEVEL; level += 1) {
+    const reward = levelRewardFor(level);
+    const reached = profile.level >= level;
+    const isClaimed = claimed.has(level);
+    const claimable = Boolean(reward && reached && !isClaimed);
+    const node = document.createElement("article");
+    node.className = "progression-node";
+    node.classList.toggle("reward-level", Boolean(reward));
+    node.classList.toggle("unreached", !reached);
+    node.classList.toggle("claimable", claimable);
+    node.classList.toggle("claimed", isClaimed);
+    node.title = reward
+      ? `Level ${level}: ${levelRewardText(reward)}`
+      : level === 1 ? "Level 1: Starting level" : `Level ${level}: No reward`;
+    node.innerHTML = `
+      <span class="progression-line" aria-hidden="true"></span>
+      <strong>Level ${level}</strong>
+      ${rewardIconMarkup(reward, isClaimed)}
+      <small>${reward ? levelRewardLabel(reward) : level === 1 ? "Start" : "No reward"}</small>
+      ${claimable ? `<button class="level-claim-button" type="button" data-level="${level}" aria-label="Claim level ${level} reward">Claim</button>` : ""}
+    `;
+    timeline.append(node);
+  }
+  const message = document.querySelector("#progressionMessage");
+  if (message) {
+    const claimableCount = claimableLevelRewards(profile).length;
+    message.textContent = claimableCount ? `${claimableCount} level reward${claimableCount === 1 ? "" : "s"} ready to claim.` : "Reach milestone levels to claim rewards.";
+  }
+}
+
+async function markInventoryOpened() {
+  const username = getActiveUsername();
+  if (!username) return;
+  const profile = getProfile(username);
+  if (!profile || !normalizeInventory(profile).hasNewItems) return;
+  if (!firebaseUser || !firebaseProfile) {
+    const updated = markInventorySeen(profile);
+    setProfile(updated, username);
+    renderInventoryBadge();
+    return;
+  }
+  const updated = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
+    const local = localProfileFromFirebaseData(remoteProfile, {
+      fallbackUsername: firebaseProfile.username,
+      fallbackEmail: firebaseProfile.email || firebaseUser.email || "",
+    });
+    const next = markInventorySeen(local);
+    return {
+      write: firebaseDocumentFromLocalProfile(next),
+      result: next,
+    };
+  });
+  firebaseProfile = updated;
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  renderInventoryBadge();
+}
+
+function renderInventory() {
+  const grid = document.querySelector("#inventoryGrid");
+  if (!grid) return;
+  const profile = profileWithEconomy(getProfile() || {});
+  const quantity = inventoryQuantity(profile, CHAI_TEA_BOOST.id);
+  const activeMsLeft = teaBoostMsLeft(profile);
+  grid.replaceChildren();
+  if (quantity <= 0) {
+    const empty = document.createElement("p");
+    empty.className = "store-empty";
+    empty.textContent = "No consumables in your inventory yet.";
+    grid.append(empty);
+    return;
+  }
+  const card = document.createElement("article");
+  card.className = "character-card inventory-card tea-card";
+  card.innerHTML = `
+    ${teaIconMarkup()}
+    <div>
+      <strong>${CHAI_TEA_BOOST.name}</strong>
+      <small>Owned: ${quantity}</small>
+      <p>Use to activate 30 minutes of +50% EXP and +25% coin gains from match rewards.</p>
+      ${activeMsLeft > 0 ? `<span class="inventory-active">Active ${teaBoostTimerText(activeMsLeft)} left</span>` : ""}
+    </div>
+    <button class="save-action" id="useChaiTeaSpecial" type="button" ${quantity <= 0 ? "disabled" : ""}>Use</button>
+  `;
+  grid.append(card);
+  const useButton = card.querySelector("#useChaiTeaSpecial");
+  if (useButton) {
+    useButton.addEventListener("click", async () => {
+      await useChaiTeaSpecial();
+      playMenuSound();
+    });
+  }
+}
+
+function renderInventoryBadge() {
+  const badge = document.querySelector("#inventoryBadge");
+  if (!badge) return;
+  const profile = getProfile();
+  badge.hidden = !profile || !normalizeInventory(profile).hasNewItems;
+}
+
 function showAchievementUnlockToast(unlocked = []) {
   const achievementsUnlocked = Array.isArray(unlocked) ? unlocked.filter(Boolean) : [];
   if (!achievementsUnlocked.length) return;
+  const realAchievements = achievementsUnlocked.filter((achievement) => achievement.id && achievementById(achievement.id));
+  if (realAchievements.length) {
+    auditUserAction("reward_claimed", `Unlocked ${realAchievements.length === 1 ? realAchievements[0].title : `${realAchievements.length} achievements`}.`, {
+      rewardType: "achievement",
+      achievementIds: realAchievements.map((achievement) => achievement.id),
+      exp: realAchievements.reduce((sum, achievement) => sum + achievement.exp, 0),
+      coins: realAchievements.reduce((sum, achievement) => sum + achievement.coins, 0),
+    });
+  }
   const toast = document.querySelector("#achievementToast");
   if (!toast) return;
   const xpTotal = achievementsUnlocked.reduce((sum, achievement) => sum + achievement.exp, 0);
@@ -4552,7 +5041,7 @@ function publicProfileWinStreakMarkup(username) {
 }
 
 function profileCardMarkup(username, options = {}) {
-  const character = getCharacterForUsername(username);
+  const character = options.character || getCharacterForUsername(username);
   const progress = profileProgress(username);
   const tag = profileTag(username);
   const streakMarkup = publicProfileWinStreakMarkup(username);
@@ -4572,9 +5061,9 @@ function profileCardMarkup(username, options = {}) {
   `;
 }
 
-function openPublicProfile(username) {
+function openPublicProfile(username, options = {}) {
   const dialog = document.querySelector("#publicProfileDialog");
-  document.querySelector("#publicProfileContent").innerHTML = profileCardMarkup(username);
+  document.querySelector("#publicProfileContent").innerHTML = profileCardMarkup(username, options);
   dialog.showModal();
 }
 
@@ -4584,6 +5073,8 @@ function renderProfile() {
   const isSetup = !profile;
   document.querySelector("#profileScreen").classList.toggle("profile-setup", isSetup);
   document.querySelector("#profileScreen").classList.toggle("profile-unverified", !firebaseUser);
+  const progressionButton = document.querySelector("#openPlayerProgression");
+  if (progressionButton) progressionButton.hidden = !profile;
   if (authFlowMode !== "createPassword") {
     document.querySelector("#profileUsername").value = profile ? profile.username : activeUsername;
   }
@@ -4620,8 +5111,8 @@ function renderProfile() {
     button.addEventListener("click", () => openHandleEdit(button.dataset.edit));
   });
   document.querySelector("#profileLevel").textContent = `Level ${progress.level}`;
-  document.querySelector("#profileExpText").textContent = `${progress.exp} / ${progress.next} EXP`;
-  document.querySelector("#profileExpFill").style.width = `${Math.min(100, (progress.exp / progress.next) * 100)}%`;
+  document.querySelector("#profileExpText").textContent = progress.level >= MAX_LEVEL ? "Max Level" : `${progress.exp} / ${progress.next} EXP`;
+  document.querySelector("#profileExpFill").style.width = progress.level >= MAX_LEVEL ? "100%" : `${Math.min(100, (progress.exp / progress.next) * 100)}%`;
   document.querySelector("#profileCoins").innerHTML = coinAmountMarkup(progress.coins);
   const streakEl = document.querySelector("#profileWinStreak");
   const activeStreaks = activeWinStreakSummaries(progress.modeWinStreaks);
@@ -5113,6 +5604,10 @@ async function sendFriendRequest(user) {
   const username = typeof user === "string" ? user : user.username;
   if (firebaseUser && firebaseProfile && typeof user !== "string") {
     await sendFirebaseFriendRequest(firebaseUser.uid, firebaseProfileDocument(firebaseProfile), user);
+    auditUserAction("friend_request_sent", `Sent friend request to ${username}.`, {
+      recipient: username,
+      recipientUid: user.uid || "",
+    });
     return;
   }
   const existing = getNotifications(username).filter((notice) => !(notice.type === "friendRequest" && notice.sender === sender && notice.recipient === username));
@@ -5134,6 +5629,10 @@ async function sendFriendRequest(user) {
 async function acceptFriendRequest(notice) {
   if (firebaseUser && firebaseProfile && notice.senderUid) {
     await acceptFirebaseFriendRequest(firebaseUser.uid, firebaseProfileDocument(firebaseProfile), notice);
+    auditUserAction("friend_request_accepted", `Accepted friend request from ${notice.sender}.`, {
+      sender: notice.sender || "",
+      senderUid: notice.senderUid || "",
+    });
     await applyAchievementEventToActiveProfile({ stats: { friendsAdded: 1 } });
     await refreshFirebaseSocialData();
     renderNotificationBadge();
@@ -5149,6 +5648,12 @@ async function acceptFriendRequest(notice) {
 
 async function declineNotification(notice) {
   if (firebaseUser && notice.id) {
+    auditUserAction(notice.type === "gameInvite" ? "game_invite_declined" : "notification_deleted", `Declined or deleted ${notice.type || "notification"}.`, {
+      notificationId: notice.id,
+      sender: notice.sender || "",
+      recipient: notice.recipient || "",
+      mode: notice.mode || "",
+    });
     await deleteFirebaseNotification(firebaseUser.uid, notice.id);
     await refreshFirebaseSocialData();
     if (notice.type === "gameInvite") markLobbyInviteDeclined(notice.id, notice.recipient);
@@ -5427,6 +5932,13 @@ async function sendGameInvite(friendId) {
   if (firebaseUser && friend.uid) {
     try {
       await sendFirebaseGameInvite(notification, friend.uid);
+      auditUserAction("game_invite_sent", `Sent ${pendingMode} invite to ${friend.username}.`, {
+        lobbyId: notification.id,
+        recipient: friend.username,
+        recipientUid: friend.uid,
+        mode: pendingMode,
+        submode: "Separate Devices",
+      });
       firebaseLobbies = [notification, ...firebaseLobbies.filter((lobby) => lobby.id !== notification.id)];
     } catch (error) {
       console.warn("Unable to send Firebase game invite", error);
@@ -5571,6 +6083,12 @@ async function joinGameInviteFromNotice(notice) {
     });
   }
   await joinLobby(notice.id, activeUser);
+  auditUserAction("game_invite_accepted", `Accepted game invite from ${notice.sender || "friend"}.`, {
+    lobbyId: notice.id,
+    sender: notice.sender || "",
+    mode: notice.mode || "",
+    submode: notice.submode || "Separate Devices",
+  });
   setActiveInviteId(notice.id);
   showScreen("waitingLobbyScreen");
 }
@@ -5751,7 +6269,7 @@ function renderActiveLobbyPrompts() {
       <span>${localGame.mode || "Standard Mode"} · <strong class="local-game-prompt-timer" id="localGamePromptTimer">${secondsLeft}s</strong> on the turn timer</span>
       <div class="lobby-prompt-actions">
         <button class="save-action" data-action="return-local-game" type="button">Return</button>
-        <button class="overwrite-action" data-action="discard-local-game" type="button">Discard</button>
+        <button class="overwrite-action" data-action="discard-local-game" type="button">Forfeit</button>
       </div>
     `;
     row.querySelectorAll("button").forEach((button) => {
@@ -6182,6 +6700,14 @@ async function purchaseCharacter(characterId = pendingCharacterId) {
   document.querySelector("#storeMessage").textContent = updated.unlocked
     ? `${character.name} purchased. Change avatars from your Profile.`
     : `${character.name} is already owned. Change avatars from your Profile.`;
+  if (updated.unlocked) {
+    auditUserAction("purchase_completed", `Purchased avatar ${character.name}.`, {
+      purchaseType: "avatar",
+      characterId,
+      characterName: character.name,
+      coinsSpent: characterPrice(characterId),
+    });
+  }
   return true;
 }
 
@@ -6257,6 +6783,11 @@ document.querySelector("#menuNotifications").addEventListener("click", () => req
 document.querySelector("#menuNotifications").addEventListener("click", playMenuSound);
 document.querySelector("#menuQuests").addEventListener("click", () => openCollectionScreen("questsScreen"));
 document.querySelector("#menuQuests").addEventListener("click", playMenuSound);
+document.querySelector("#menuInventory").addEventListener("click", async () => {
+  await markInventoryOpened();
+  openCollectionScreen("inventoryScreen");
+});
+document.querySelector("#menuInventory").addEventListener("click", playMenuSound);
 document.querySelector("#menuProfile").addEventListener("click", () => {
   previousScreen = "mainMenuScreen";
   showScreen("profileScreen");
@@ -6347,6 +6878,26 @@ document.querySelector("#questsBack").addEventListener("click", closeCollectionS
 document.querySelector("#questsBack").addEventListener("click", playMenuSound);
 document.querySelector("#questsTopBack").addEventListener("click", closeCollectionScreen);
 document.querySelector("#questsTopBack").addEventListener("click", playMenuSound);
+document.querySelector("#progressionBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#progressionBack").addEventListener("click", playMenuSound);
+document.querySelector("#progressionTopBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#progressionTopBack").addEventListener("click", playMenuSound);
+document.querySelector("#progressionTimeline").addEventListener("click", async (event) => {
+  const button = event.target.closest(".level-claim-button");
+  if (!button) return;
+  event.preventDefault();
+  try {
+    await claimLevelReward(Number(button.dataset.level));
+    playMenuSound();
+  } catch (error) {
+    console.warn("Unable to claim level reward", error);
+    document.querySelector("#progressionMessage").textContent = "Unable to claim reward. Publish the latest Firestore rules and try again.";
+  }
+});
+document.querySelector("#inventoryBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#inventoryBack").addEventListener("click", playMenuSound);
+document.querySelector("#inventoryTopBack").addEventListener("click", closeCollectionScreen);
+document.querySelector("#inventoryTopBack").addEventListener("click", playMenuSound);
 document.querySelector("#globalSwitchAccount").addEventListener("click", async () => {
   if (firebaseUser) {
     await signOutToLanding();
@@ -6493,6 +7044,8 @@ document.querySelector("#profileBack").addEventListener("click", () => {
   showScreen(previousScreen);
 });
 document.querySelector("#profileBack").addEventListener("click", playMenuSound);
+document.querySelector("#openPlayerProgression").addEventListener("click", () => openCollectionScreen("progressionScreen"));
+document.querySelector("#openPlayerProgression").addEventListener("click", playMenuSound);
 document.querySelector("#saveProfile").addEventListener("click", async () => {
   if (await saveProfile() && getProfile()) showScreen(previousScreen);
 });
@@ -6710,7 +7263,7 @@ function teaIconMarkup(extraClass = "") {
 function openPurchaseTeaDialog(teaId) {
   if (teaId !== CHAI_TEA_BOOST.id) return;
   pendingTeaId = teaId;
-  document.querySelector("#purchaseTeaText").innerHTML = `Buy ${escapeHtml(CHAI_TEA_BOOST.name)} for ${coinAmountMarkup(CHAI_TEA_BOOST.price)}?<br><small>Grants 30 minutes of +50% EXP and +25% coin gains from match rewards only.</small>`;
+  document.querySelector("#purchaseTeaText").innerHTML = `Buy ${escapeHtml(CHAI_TEA_BOOST.name)} for ${coinAmountMarkup(CHAI_TEA_BOOST.price)}?<br><small>Stored in Cafe Inventory. Use it later for 30 minutes of +50% EXP and +25% coin gains from match rewards only.</small>`;
   document.querySelector("#purchaseTeaDialog").showModal();
 }
 
@@ -6737,14 +7290,13 @@ async function purchaseTea(teaId = pendingTeaId) {
         result: { ok: false, reason: "coins" },
       };
     }
-    const activeUntil = Math.max(Date.now(), economy.boostActiveUntil || 0) + CHAI_TEA_BOOST.durationMs;
-    const next = profileWithEconomy(local, {
+    let next = profileWithEconomy(local, {
       coins: economy.coins - CHAI_TEA_BOOST.price,
-      boostActiveUntil: activeUntil,
       achievementStats: addAchievementStats(local.achievementStats, {
         totalCoinsSpent: CHAI_TEA_BOOST.price,
       }),
     });
+    next = addConsumableToProfile(next, CHAI_TEA_BOOST.id, 1);
     const achievementResult = awardEligibleAchievements(next, {});
     return {
       write: firebaseDocumentFromLocalProfile(achievementResult.profile),
@@ -6760,10 +7312,15 @@ async function purchaseTea(teaId = pendingTeaId) {
   document.querySelector("#storeCoinBalance").innerHTML = coinAmountMarkup(normalizeEconomy(firebaseProfile).coins);
   renderTeaStore();
   renderCharacterStore();
-  renderTeaBoostBadge();
-  startTeaBoostTimerLoop();
+  renderInventoryBadge();
   showAchievementUnlockToast(updated.unlockedAchievements);
-  document.querySelector("#storeMessage").textContent = `${CHAI_TEA_BOOST.name} activated for ${teaBoostTimerText(teaBoostMsLeft(firebaseProfile))}.`;
+  document.querySelector("#storeMessage").textContent = `${CHAI_TEA_BOOST.name} added to Cafe Inventory.`;
+  auditUserAction("purchase_completed", `Purchased ${CHAI_TEA_BOOST.name}.`, {
+    purchaseType: "consumable",
+    itemId: CHAI_TEA_BOOST.id,
+    quantity: 1,
+    coinsSpent: CHAI_TEA_BOOST.price,
+  });
   return true;
 }
 
@@ -6780,7 +7337,7 @@ function renderTeaStore() {
   button.innerHTML = `
     ${teaIconMarkup()}
     <strong>${CHAI_TEA_BOOST.name}</strong>
-    <small>${boost ? `Active ${teaBoostTimerText(teaBoostMsLeft(firebaseProfile))} left | ` : ""}Match rewards only | ${coinAmountMarkup(CHAI_TEA_BOOST.price)}</small>
+    <small>${boost ? `Active ${teaBoostTimerText(teaBoostMsLeft(firebaseProfile))} left | ` : ""}${coinAmountMarkup(CHAI_TEA_BOOST.price)}</small>
   `;
   button.addEventListener("click", () => {
     openPurchaseTeaDialog(CHAI_TEA_BOOST.id);
