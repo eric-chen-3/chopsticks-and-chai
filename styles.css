@@ -1,4 +1,5 @@
 :root {
+  --game-font: "Quicksand", "Trebuchet MS", "Segoe UI", sans-serif;
   --ink: #5b586d;
   --muted: #8a8798;
   --paper: #fff8ee;
@@ -41,7 +42,7 @@ body {
   overflow-x: hidden;
   overscroll-behavior: none;
   color: var(--ink);
-  font-family: "Quicksand", "Trebuchet MS", "Segoe UI", sans-serif;
+  font-family: var(--game-font);
   touch-action: manipulation;
   background: var(--background-pink);
 }
@@ -4308,17 +4309,12 @@ dialog form {
   animation: tear-drop 1.05s ease-in infinite;
 }
 
-.game-over-new,
 .game-over-menu,
 #returnToLobby {
   width: 100%;
   font-weight: 900;
 }
 
-.game-over-new {
-  background: #cfe9c9;
-  box-shadow: 0 5px 0 rgba(83, 128, 75, 0.2);
-}
 
 #returnToLobby {
   background: #cfe9c9;
@@ -5355,3 +5351,169 @@ dialog ul {
     --avatar-frame-height: 27px;
   }
 }
+
+.invite-friend-card:disabled {
+  filter: grayscale(1);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.notification-row.pending-friend-request {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 5px 0 rgba(91, 88, 109, 0.1);
+}
+
+/* Keep chat within the phone viewport, including unbroken URLs and words. */
+#lobbyChatDialog, #lobbyChatDialog form, .chat-log, .chat-log p,
+.chat-log strong, .chat-log span, .chat-input-row, .chat-input-row input,
+.chat-player, .chat-player strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.chat-log { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+.chat-log span { white-space: pre-wrap; }
+.chat-input-row { grid-template-columns: minmax(0, 1fr) auto; }
+#openLobbyChat { position: relative; }
+.chat-unread-badge {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #df334b;
+  border: 2px solid white;
+}
+.chat-unread-badge[hidden] { display: none; }
+
+#menuProfile { position: relative; }
+.level-reward-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #df334b;
+  border: 2px solid #fff;
+  pointer-events: none;
+}
+.level-reward-badge[hidden] { display: none; }
+.profile-handle-row { width: 100%; justify-content: center; gap: 8px; }
+
+/* Launch Ranked UI; Power Up engine is retained behind its hidden entry point. */
+#powerMode[hidden] { display: none; }
+.leaderboard-corner { position:absolute; top:96px; left:14px; z-index:2; }
+.leaderboard-corner::before, .leaderboard-corner::after { display:none; }
+.leaderboard-corner svg { width:28px; height:28px; fill:none; stroke:currentColor; stroke-width:2; }
+.leaderboard-corner small { position:absolute; top:100%; left:50%; transform:translateX(-50%); font-size:9px; line-height:1.2; margin-top:3px; }
+.rank-summary { color:var(--ink); font-weight:800; }
+.leaderboard-card { max-height:85dvh; overflow-y:auto; }
+.leaderboard-list { padding:0; list-style:none; display:grid; gap:8px; }
+.leaderboard-list li { display:flex; justify-content:space-between; gap:12px; padding:12px; background:white; border-radius:10px; }
+.leaderboard-list strong { overflow-wrap:anywhere; min-width:0; }
+.leaderboard-list span { flex-shrink:0; }
+.leaderboard-self { outline:2px solid #c89551; }
+#leaderboardRank { font:inherit; padding:10px; border-radius:10px; max-width:100%; }
+@media (orientation: landscape) and (max-height: 620px) { .leaderboard-corner { top:52px; } }
+
+.game-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; }
+.match-timer { font-size: 0.85rem; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); }
+.match-timer.critical { color: #a63542; }
+.game-over.draw { border-color: #8aabb4; }
+
+.trophy-icon { display: inline-block; width: 1.08em; height: 1.08em; margin: 0 0.16em; vertical-align: -0.16em; }
+.ranked-result-header { justify-self: stretch; display: flex; align-items: center; gap: 10px; text-align: left; font-weight: 800; }
+.ranked-result-header[hidden] { display: none; }
+.result-rank { font-size: 1.7rem; }
+#rewardCoinText { overflow-wrap: anywhere; }
+
+.reward-chopsticks { display: inline-block; width: 52px; height: 40px; flex: 0 0 auto; }
+.score-chip.defeat { color: #a32636; background: #ffe2e5; }
+.score-chip.victory { color: #466b4c; background: #edf6ec; }
+
+#menuLeaderboard, #menuNotifications, #menuSettings, #menuQuests, #menuInventory {
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  border: 2px solid rgba(91, 88, 109, 0.35);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+#menuNotifications::before, #menuNotifications::after { display: none; }
+#menuLeaderboard svg, #menuNotifications svg, #menuSettings svg, #menuQuests svg, #menuInventory svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.reward-chopsticks { transform: scaleY(-1); }
+
+/* Bookmark experiment: remove bookmark-navigation from the home card to restore circles. */
+.bookmark-navigation :is(#menuLeaderboard, #menuNotifications, #menuSettings, #menuQuests, #menuInventory) {
+  width: 26px; min-width: 26px; height: 46px; min-height: 46px;
+  border: 0; border-radius: 0; right: -1px;
+  background: linear-gradient(90deg, #c39162, #bb8454 80%, #996238);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 7px 50%);
+  filter: drop-shadow(-2px 3px 2px #66432933);
+  color: #fff2dc;
+  transition: width 220ms ease, min-width 220ms ease;
+}
+.bookmark-navigation #menuLeaderboard {
+  left: -1px; right: auto;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 50%, 100% 100%, 0 100%);
+  background: linear-gradient(90deg, #996238, #bb8454 20%, #c39162);
+}
+.bookmark-navigation :is(#menuLeaderboard, #menuNotifications, #menuSettings, #menuQuests, #menuInventory) svg {
+  opacity: 0; transition: opacity 150ms ease;
+  stroke-width: 2; width: 25px; height: 25px;
+}
+.bookmark-navigation :is(#menuLeaderboard, #menuNotifications, #menuSettings, #menuQuests, #menuInventory).flap-open,
+.bookmark-navigation :is(#menuLeaderboard, #menuNotifications, #menuSettings, #menuQuests, #menuInventory):focus-visible {
+  width: 64px; min-width: 64px;
+}
+.bookmark-navigation .flap-open svg, .bookmark-navigation button:focus-visible svg { opacity: 1 !important; }
+@media (hover: hover) and (pointer: fine) {
+  .bookmark-navigation :is(#menuLeaderboard, #menuNotifications, #menuSettings, #menuQuests, #menuInventory):hover { width: 64px; min-width: 64px; }
+  .bookmark-navigation button:hover svg { opacity: 1 !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bookmark-navigation button, .bookmark-navigation button svg { transition: none !important; }
+}
+.reward-chopsticks { width: 64px; height: 58px; transform: none; }
+
+/* Align reward totals with the base of the illustration. */
+.coin-reward-row { align-items: flex-end; }
+#rewardCoinText { margin-bottom: 3px; line-height: 1.2; }
+/* Same unread dot as Profile; keep it inside the clipped bookmark. */
+.bookmark-navigation .icon-button .level-reward-badge {
+  width: 13px; height: 13px; top: 4px; right: 4px;
+  background: #df334b; border: 2px solid #fff; border-radius: 50%;
+  pointer-events: none; z-index: 1;
+}
+.bookmark-navigation #menuLeaderboard .level-reward-badge { left: 4px; right: auto; }
+
+.daily-mail-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px; background: white; border: 1px solid #eaded4; border-radius: 18px; text-align: left; }
+.daily-mail-card > span:nth-child(2) { display: grid; gap: 5px; flex: 1; }
+.daily-mail-card small { color: var(--muted); }
+.daily-mail-dialog { width: min(420px, calc(100vw - 24px)); max-height: 85dvh; overflow-y: auto; padding: 22px; border: 1px solid #eaded4; border-radius: 24px; background: white; color: var(--ink); font-family: var(--game-font); }
+.daily-mail-dialog > * { margin-bottom: 14px; }
+.daily-mail-dialog::backdrop { background: #362d3355; }
+.daily-mail-quest { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px; border: 1px solid #eaded4; border-radius: 12px; margin-top: 8px; }
+#collectDailyMail { width: 100%; background: var(--mint); margin-top: 16px; }

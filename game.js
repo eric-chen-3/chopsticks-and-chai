@@ -1,5 +1,10 @@
+import { MATCH_DURATION_MS, ensureMatchClock, expiredMatchResult, completedByClock, formatMatchTime, isDraw } from "./functions/match-clock.js";
+import { RANKS, rankView } from "./functions/ranked-core.js";
+import { submitRankedState, serverNow, rankedCall, watchRankedProfile, watchRankedLeaderboard, getRankedLobby } from "./firebase.js";
+import { sameMatch, completedGameState } from "./match-sync.js";
 import {
   acceptFirebaseFriendRequest,
+  completeFirebaseMatch,
   deleteFirebaseAccount,
   deleteFirebaseNotification,
   deleteFirebaseLobby,
@@ -21,16 +26,31 @@ import {
   signUpWithEmail,
   subscribeToAuthState,
   subscribeToFriends,
+  subscribeToFriendPresence,
+  subscribeToPlayerProfile,
+  publishPlayerProfile,
   subscribeToLobbyMessages,
   subscribeToLobbiesForUser,
   subscribeToNotifications,
   subscribeToSaves,
   updateUserProfileTransaction,
   updateUserPresence,
+  stopUserPresence,
   upsertUserProfile,
   writeFirebaseSave,
   writeFirebaseLobby,
 } from "./firebase.js";
+
+let rankedProfileData = null;
+let stopRankWatch = null;
+let stopLeaderboardWatch = null;
+let rankedQueueTimer = null;
+let rankedQueueRunning = false;
+let rankedQueueRequest = null;
+let rankedIdentity = null;
+let rankedError = "";
+let rankedTurnPending = false;
+let rankedSyncError = "";
 
 const SAVE_KEY = "chopstickDuel.saves";
 const SETTINGS_KEY = "chopstickDuel.settings";
@@ -196,7 +216,6 @@ let pendingCharacterId = "";
 let pendingTeaId = "";
 let pendingRenameAccount = "";
 let pendingHostClosedNoticeId = "";
-let pendingHandleEdit = "";
 let pendingStartupBackScreen = "submodeScreen";
 let pendingIncomingGameInviteId = "";
 let forfeitTimerId = null;
@@ -213,8 +232,13 @@ let firebaseLobbies = [];
 let firebaseSaves = [];
 let firebaseDataUnsubscribers = [];
 let firebaseUsernameUidMap = {};
-let presenceHeartbeatId = null;
+const friendPresenceSubscriptions = new Map();
+const friendPresence = new Map();
+const friendProfileSubscriptions = new Map();
+const friendProfiles = new Map();
+let openFriendProfileUid = null;
 let gameStateSyncTimer = null;
+const completedResultScreens = new Set();
 let lobbyChatUnsubscribe = null;
 let lobbyChatSubscriptionId = "";
 let dailyCheckInPromise = null;
@@ -335,7 +359,12 @@ function makePlayer(name) {
 }
 
 function createGame() {
+  const matchStartedAt = pendingSubmode === "Separate Devices" ? serverNow() : Date.now();
   return {
+    matchStartedAt,
+    matchDeadlineAt: matchStartedAt + MATCH_DURATION_MS,
+    matchId: crypto.randomUUID(),
+    revision: 0,
     players: [makePlayer("Player 1"), makePlayer("Player 2")],
     current: 0,
     selected: null,
@@ -348,8 +377,8 @@ function createGame() {
     lobbyId: pendingSubmode === "Separate Devices" ? activeInviteId() : null,
     playerCharacters: ["honeyBear", "mochiBunny"],
     playerWinStreaks: [0, 0],
-    turnStartedAt: Date.now(),
-    turnDeadlineAt: Date.now() + (TURN_TIMER_SECONDS * 1000),
+    turnStartedAt: matchStartedAt,
+    turnDeadlineAt: matchStartedAt + (TURN_TIMER_SECONDS * 1000),
     aiDifficulty: pendingSubmode === "Play vs AI" ? pendingAiDifficulty : null,
     saveId: null,
     rewardSummary: null,
@@ -357,6 +386,7 @@ function createGame() {
 }
 
 function startNewGame() {
+  if (pendingMode === "Power Up Mode" || pendingMode === "Ranked Mode") return;
   clearAiMoveTimer();
   game = createGame();
   if (game.submode === "Separate Devices" && game.lobbyId) {
@@ -458,6 +488,7 @@ function applyProfileNames() {
 }
 
 function applyGameCharacters() {
+  if (game?.mode === "Ranked Mode") return;
   const profile = getProfile();
   const invite = getActiveInvite();
   const playerCharacter = getSelectedCharacter().id;
@@ -525,13 +556,14 @@ function maxLiveChopsticks() {
 }
 
 function showScreen(screenId) {
-  ["mainMenuScreen", "profileScreen", "progressionScreen", "inventoryScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "aiDifficultyScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"].forEach((id) => {
+  ["leaderboardScreen", "rankedQueueScreen", "mainMenuScreen", "profileScreen", "progressionScreen", "inventoryScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "aiDifficultyScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"].forEach((id) => {
     document.querySelector(`#${id}`).hidden = id !== screenId;
   });
   document.querySelector("#gameMenuDropdown").hidden = true;
   renderGlobalMockSwitcher();
   renderNotificationBadge();
   renderQuestBadge();
+  renderLevelRewardBadges();
   renderInventoryBadge();
   renderTeaBoostBadge();
   startTeaBoostTimerLoop();
@@ -655,6 +687,7 @@ function selectFirstHand(playerIndex, handIndex) {
 }
 
 function attack(attackerHand, targetHand) {
+  if (endExpiredMatchIfNeeded()) return;
   const player = currentPlayer();
   const opponent = opponentPlayer();
   let actualTarget = targetHand;
@@ -710,6 +743,7 @@ function applyHit(player, opponent, attackerHand, targetHand) {
 }
 
 function transferSplit(sourceHand, targetHand) {
+  if (endExpiredMatchIfNeeded()) return;
   const player = currentPlayer();
   const sourceValue = player.hands[sourceHand];
   const targetValue = player.hands[targetHand];
@@ -780,6 +814,7 @@ function splitChoices(player) {
 }
 
 function applySplit(left, right) {
+  if (endExpiredMatchIfNeeded()) return;
   const player = currentPlayer();
   if (game.over || player.actionUsed || !validSplit(player, left, right)) return;
 
@@ -1002,7 +1037,9 @@ function isOneOne(player) {
 }
 
 function endTurn(options = {}) {
+  if (endExpiredMatchIfNeeded()) return;
   if (!game || game.over || (!options.force && !canActiveAccountAct())) return;
+  if (game.mode === "Ranked Mode") return endRankedTurn();
 
   currentPlayer().actionUsed = false;
   if (isPowerMode()) {
@@ -1013,21 +1050,50 @@ function endTurn(options = {}) {
   hideSplitChoices();
   startPowerTurn(currentPlayer());
   resetTurnDeadline();
-  markMissingCurrentTurnPlayerAbsent();
 
   addLog(`${currentPlayer().name}'s turn.`);
   render();
   syncActiveGameStateSoon(0);
 }
 
+async function endRankedTurn() {
+  if (rankedTurnPending || !currentPlayer().actionUsed) return;
+  const matchId = game.matchId;
+  const proposal = serializableGameState();
+  proposal.players[proposal.current].actionUsed = false;
+  proposal.current = 1 - proposal.current;
+  proposal.selected = null;
+  rankedTurnPending = true;
+  rankedSyncError = "";
+  hideSplitChoices();
+  render();
+  try {
+    // Keep displaying the shared turn/deadline until the server accepts End Turn.
+    await submitRankedState(proposal.lobbyId, proposal);
+  } catch (error) {
+    if (game?.matchId !== matchId) return;
+    rankedSyncError = "End Turn was not confirmed. Check your connection and try again.";
+    try {
+      const lobby = await getRankedLobby(proposal.lobbyId);
+      if (game?.matchId === matchId && lobby?.gameState) {
+        if (!applyRemoteCompletedLobby(lobby)) game = JSON.parse(JSON.stringify(lobby.gameState));
+      }
+    } catch { /* Keep the failure visible if the shared state is unreachable too. */ }
+  } finally {
+    rankedTurnPending = false;
+    if (game?.matchId === matchId) render();
+  }
+}
+
 function resetTurnDeadline() {
   if (!game || game.over) return;
-  game.turnStartedAt = Date.now();
+  game.turnStartedAt = matchClockNow();
   game.turnDeadlineAt = game.turnStartedAt + (TURN_TIMER_SECONDS * 1000);
 }
 
 function ensureTurnDeadline() {
   if (!game || game.over) return;
+  ensureMatchClock(game, matchClockNow());
   const deadline = Number(game.turnDeadlineAt) || 0;
   if (deadline > 0) return;
   resetTurnDeadline();
@@ -1036,10 +1102,14 @@ function ensureTurnDeadline() {
 function turnTimerMsLeft() {
   if (!game || game.over) return 0;
   ensureTurnDeadline();
-  return Math.max(0, (Number(game.turnDeadlineAt) || 0) - Date.now());
+  return Math.max(0, (Number(game.turnDeadlineAt) || 0) - matchClockNow());
 }
 
 function startTurnTimerLoop() {
+  if (!game || game.over) {
+    stopTurnTimerLoop();
+    return;
+  }
   if (turnTimerId) return;
   turnTimerId = window.setInterval(updateTurnTimer, 250);
 }
@@ -1051,7 +1121,55 @@ function stopTurnTimerLoop() {
   if (panel) panel.hidden = true;
 }
 
+function matchClockNow() {
+  return game?.submode === "Separate Devices" ? serverNow() : Date.now();
+}
+
+function renderMatchTimer() {
+  const label = document.querySelector("#matchTimer");
+  if (!label || !game) return;
+  ensureMatchClock(game, matchClockNow());
+  const remaining = isDraw(game) ? 0 : Math.max(0, game.matchDeadlineAt - matchClockNow());
+  label.textContent = `Match Timer: ${formatMatchTime(remaining)}`;
+  label.classList.toggle("critical", remaining <= 60000);
+}
+
+function endExpiredMatchIfNeeded() {
+  if (!game || game.over) return false;
+  ensureMatchClock(game, matchClockNow());
+  const result = expiredMatchResult(game, matchClockNow());
+  if (!result) return false;
+  if (result.outcome !== "draw") {
+    handleTurnTimerExpired();
+    return true;
+  }
+  Object.assign(game, completedByClock(game, result));
+  showScreen("gameScreen");
+  renderMatchTimer();
+  showGameOver(null, null);
+  return true;
+}
+
+function showDrawResult(finished) {
+  const dialog = document.querySelector("#gameOverDialog");
+  dialog.classList.remove("win", "lose");
+  dialog.classList.add("draw");
+  renderRankedResultHeader();
+  const avatarIndex = finished.submode === "Separate Devices" ? Math.max(0, activePlayerIndex()) : 0;
+  document.querySelector("#gameOverAvatar").innerHTML = characterMarkup(getPlayerCharacter(avatarIndex), "result-avatar");
+  document.querySelector("#winnerTitle").textContent = "It's a draw!";
+  document.querySelector("#winnerText").textContent = "The 10-minute match timer ran out. Neither player wins or loses. No EXP, coins, rewards, or trophies are awarded; your trophies stay unchanged.";
+  document.querySelector("#returnToLobby").hidden = finished.submode !== "Separate Devices" || finished.mode === "Ranked Mode";
+  finished.rewardSummary = [];
+  renderRewardPanel(null);
+  renderMatchTimer();
+  if (!dialog.open) dialog.showModal();
+  writePresence();
+}
+
 function updateTurnTimer() {
+  renderMatchTimer();
+  if (endExpiredMatchIfNeeded()) return;
   const panel = document.querySelector("#turnTimerPanel");
   if (!panel) return;
   if (!game || game.over) {
@@ -1088,22 +1206,8 @@ function handleTurnTimerExpired() {
   addLog(`${loser} ran out of time.`);
   game.players[loserIndex].hands = [0, 0];
   game.over = true;
-  if (game.submode === "Separate Devices" && game.lobbyId) {
-    const timeoutGameState = JSON.parse(JSON.stringify({
-      ...game,
-      timeoutForfeit: true,
-      timeoutForfeitPlayer: loser,
-      syncedAt: Date.now(),
-    }));
-    updateLobby(game.lobbyId, (lobby) => ({
-      ...lobby,
-      status: "complete",
-      activeGame: false,
-      absentPlayers: {},
-      activeTurnPlayer: loser,
-      gameState: timeoutGameState,
-    }));
-  }
+  game.timeoutForfeit = true;
+  game.timeoutForfeitPlayer = loser;
   showScreen("gameScreen");
   showGameOver(winnerIndex, loserIndex);
 }
@@ -1124,54 +1228,94 @@ function checkSelfLoss() {
   }
 }
 
-async function showGameOver(winnerIndex, loserIndex) {
-  const winner = game.players[winnerIndex];
-  const loser = game.players[loserIndex];
+async function showGameOver(winnerIndex, loserIndex, options = {}) {
+  if (!game) return;
+  const finished = game;
+  const key = finished.matchId || finished;
+  if (completedResultScreens.has(key)) return;
+  completedResultScreens.add(key);
+  finished.over = true;
+  finished.result = completedGameState(finished, winnerIndex, loserIndex).result;
+  [0, 1].forEach(index => renderPlayerStatus(index, document.querySelector(`#p${index + 1}Status`)));
   stopTurnTimerLoop();
+  clearAiMoveTimer();
+  if (gameStateSyncTimer) window.clearTimeout(gameStateSyncTimer);
+  gameStateSyncTimer = null;
+  if (forfeitTimerId) window.clearInterval(forfeitTimerId);
+  forfeitTimerId = null;
+  document.querySelector("#forfeitTimerPanel").hidden = true;
   clearActiveGameState();
-  const rewards = await awardMatchRewardsAsync(winnerIndex, loserIndex);
-  auditUserAction("match_completed", `${winner.name} won a ${game.mode} / ${displaySubmodeName(game.submode)} match.`, {
-    mode: game.mode,
-    submode: game.submode,
-    aiDifficulty: game.aiDifficulty || "",
-    lobbyId: game.lobbyId || "",
-    winner: winner.name,
-    loser: loser.name,
-    timeoutForfeit: Boolean(game.timeoutForfeit),
-    winnerIndex,
-    loserIndex,
-    rewards: Array.isArray(rewards) ? rewards.map((reward) => ({
-      username: reward.username,
-      didWin: reward.didWin,
-      xp: reward.xp,
-      coins: reward.coins,
-      baseXp: reward.baseXp,
-      baseCoins: reward.baseCoins,
-      boostApplied: Boolean(reward.boostApplied),
-    })) : [],
-  });
-  if (game.submode === "Separate Devices" && game.lobbyId) {
-    updateLobby(game.lobbyId, (lobby) => ({ ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: null }));
+  if (finished.submode === "Separate Devices" && finished.lobbyId && !options.remote) {
+    const finalState = completedGameState(finished, winnerIndex, loserIndex);
+    try {
+      const confirmed = firebaseUser
+        ? await completeFirebaseMatch(finished.lobbyId, finalState)
+        : finalState;
+      if (!confirmed?.over) {
+        completedResultScreens.delete(key);
+        game = JSON.parse(JSON.stringify(confirmed || finished));
+        game.over = false;
+        delete game.result;
+        delete game.endReason;
+        delete game.timeoutForfeit;
+        showScreen("gameScreen");
+        render();
+        return;
+      }
+      Object.assign(finished, confirmed);
+      winnerIndex = confirmed.result.winnerIndex;
+      loserIndex = confirmed.result.loserIndex;
+      if (!firebaseUser) updateLobby(finished.lobbyId, (lobby) => ({
+        ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: confirmed,
+      }));
+    } catch (error) {
+      completedResultScreens.delete(key);
+      console.error("Unable to confirm match result", error);
+      addLog("Could not confirm the result. Retrying…");
+      window.setTimeout(() => {
+        if (game === finished) showGameOver(winnerIndex, loserIndex);
+      }, 1500);
+      return;
+    }
   }
-  const activeIndex = activePlayerIndex();
-  const showLose = game.submode === "Separate Devices" && activeIndex === loserIndex;
+  if (game !== finished) return;
+  [0, 1].forEach(index => renderPlayerStatus(index, document.querySelector(`#p${index + 1}Status`)));
+  if (isDraw(finished)) { showDrawResult(finished); return; }
+  const winner = finished.players[winnerIndex];
+  const loser = finished.players[loserIndex];
+  const showLose = finished.submode === "Separate Devices" && activePlayerIndex() === loserIndex;
   const viewedRewardName = showLose ? loser.name : winner.name;
-  const character = getPlayerCharacter(winnerIndex);
+  const character = getPlayerCharacter(showLose ? loserIndex : winnerIndex);
   const dialog = document.querySelector("#gameOverDialog");
+  dialog.classList.remove("draw");
   dialog.classList.toggle("lose", showLose);
   dialog.classList.toggle("win", !showLose);
   document.querySelector("#gameOverAvatar").innerHTML = characterMarkup(character, showLose ? "result-avatar sad" : "result-avatar");
   document.querySelector("#winnerTitle").textContent = showLose ? "You lost" : `${winner.name} wins`;
-  const viewedReward = game.submode === "Separate Devices" ? rewardForUsername(viewedRewardName) : null;
-  const streakText = !showLose ? winStreakText(winner.name) : "";
-  document.querySelector("#winnerText").innerHTML = `${showLose
-    ? `${escapeHtml(winner.name)} knocked both of your chopsticks down.`
-    : `${escapeHtml(loser.name)}'s chopsticks are both down.`}${streakText ? ` ${escapeHtml(streakText)}` : ""}`;
-  renderRewardPanel(viewedReward);
-  document.querySelector("#returnToLobby").hidden = game.submode !== "Separate Devices";
+  document.querySelector("#winnerText").textContent = finished.timeoutForfeit
+    ? `${loser.name} ran out of time.`
+    : showLose ? `${winner.name} knocked both of your chopsticks down.` : `${loser.name}'s chopsticks are both down.`;
+  document.querySelector("#returnToLobby").hidden = finished.submode !== "Separate Devices" || finished.mode === "Ranked Mode";
+  renderRankedResultHeader();
+  renderRewardPanel(null);
+  if (!dialog.open) dialog.showModal();
   playEndGameSounds(showLose ? "lose" : "win");
-  dialog.showModal();
-  animateRewardPanel(viewedReward);
+  writePresence();
+  // Resolve rewards independently on each player's account, after the result is visible.
+  try {
+    await awardMatchRewardsAsync(winnerIndex, loserIndex);
+    if (game !== finished) return;
+    const reward = rewardForUsername(viewedRewardName);
+    renderRewardPanel(reward);
+    animateRewardPanel(reward);
+    auditUserAction("match_completed", `${winner.name} won the match.`, {
+      winner: winner.name, loser: loser.name, matchId: finished.matchId || "",
+      winnerIndex, loserIndex, mode: finished.mode, submode: finished.submode,
+    });
+  } catch (error) {
+    console.error("Unable to apply match rewards", error);
+    document.querySelector("#winnerText").textContent += " Rewards could not be loaded.";
+  }
 }
 
 function clearSelection() {
@@ -1186,7 +1330,7 @@ function render() {
   startTurnTimerLoop();
   const player = currentPlayer();
   document.querySelector("#gameModeLabel").textContent = game.mode;
-  document.querySelector(".turn-card small").textContent = displaySubmodeName(game.submode);
+  document.querySelector(".turn-card small").textContent = game.mode === "Ranked Mode" ? "Ranked" : displaySubmodeName(game.submode);
   document.querySelector("#turnLabel").textContent = `${player.name}'s turn`;
   document.querySelector("#phaseLabel").textContent = !canActiveAccountAct() ? "Waiting" : player.actionUsed ? "End turn" : "Tap a fan";
   const hintBox = document.querySelector(".play-orb");
@@ -1197,7 +1341,10 @@ function render() {
   const endTurnButton = document.querySelector("#endTurn");
   const canAct = canActiveAccountAct();
   endTurnButton.textContent = !game.over && canAct && !player.actionUsed ? "Select your action" : "End Turn";
-  endTurnButton.disabled = game.over || !player.actionUsed || !canAct;
+  endTurnButton.disabled = game.over || !player.actionUsed || !canAct || (game.mode === "Ranked Mode" && rankedTurnPending);
+  const syncStatus = document.querySelector("#rankedSyncStatus");
+  syncStatus.hidden = game.mode !== "Ranked Mode" || !rankedSyncError;
+  syncStatus.textContent = rankedSyncError || "";
 
   renderPlayer(0, document.querySelector("#player1Zone"), document.querySelector("#p1Hands"), document.querySelector("#p1Status"));
   renderPlayer(1, document.querySelector("#player2Zone"), document.querySelector("#p2Hands"), document.querySelector("#p2Status"));
@@ -1228,7 +1375,7 @@ function renderPlayer(index, zone, handsEl, statusEl) {
   zone.classList.toggle("current-turn", isCurrent);
   zone.dataset.seat = fixedSeat ? (isLocalPlayer ? "current" : "opponent") : (isCurrent ? "current" : "opponent");
   zone.style.setProperty("--mobile-order", fixedSeat ? (isLocalPlayer ? "3" : "1") : (isCurrent ? "3" : "1"));
-  const isHost = game.submode === "Separate Devices" && game.players[0].name === player.name;
+  const isHost = game.mode !== "Ranked Mode" && game.submode === "Separate Devices" && game.players[0].name === player.name;
   const eyebrow = zone.querySelector(".player-header .eyebrow");
   const title = zone.querySelector("h2");
   const playerWinStreak = Array.isArray(game.playerWinStreaks)
@@ -1269,7 +1416,17 @@ function renderPlayer(index, zone, handsEl, statusEl) {
     handsEl.append(button);
   });
 
-  statusEl.textContent = player.hands.every((value) => value === 0) ? "Both down" : isPowerMode() ? `${scoreText(player)} | E${player.energy}` : scoreText(player);
+  renderPlayerStatus(index, statusEl);
+}
+
+function renderPlayerStatus(index, statusEl) {
+  const player = game.players[index];
+  const ended = game.over && game.result;
+  const defeat = Boolean(ended && !isDraw(game) && game.result.loserIndex === index);
+  const victory = Boolean(ended && !isDraw(game) && game.result.winnerIndex === index);
+  statusEl.classList.toggle("defeat", defeat);
+  statusEl.classList.toggle("victory", victory);
+  statusEl.textContent = defeat ? "Defeat" : victory ? "Victory" : ended && isDraw(game) ? "Draw" : player.hands.every(value => value === 0) ? "Both down" : isPowerMode() ? `${scoreText(player)} | E${player.energy}` : scoreText(player);
 }
 
 function startPowerTurn(player, shouldDraw = true) {
@@ -1348,6 +1505,7 @@ function openCardDetail(index) {
 }
 
 function playPendingCard() {
+  if (endExpiredMatchIfNeeded()) return;
   if (pendingCardIndex === null || !isPowerMode() || !canActiveAccountAct()) return;
   const player = currentPlayer();
   const cardId = player.cardHand[pendingCardIndex];
@@ -1542,17 +1700,11 @@ function playSound(type) {
   }
 
   if (type === "sadLose") {
-    playVoice(context, {
-      startFrequency: 300,
-      endFrequency: 145,
-      duration: 0.62,
-      volume: volume * 0.22,
-      vowel: "aww",
-      delay: 0,
-    });
-    [0.72, 0.9, 1.08].forEach((delay, index) => {
-      playTone(context, 520 + index * 40, delay, 0.045, volume * 0.09, "triangle");
-      playTone(context, 180, delay + 0.025, 0.035, volume * 0.06, "sine");
+    [294, 262, 196].forEach((frequency, index) => {
+      const delay = index * 0.32;
+      playVoice(context, { startFrequency: frequency, endFrequency: frequency * 0.82,
+        duration: index === 2 ? 0.8 : 0.28, volume: volume * 0.2, vowel: "aww", delay });
+      playTone(context, frequency, delay, index === 2 ? 0.8 : 0.28, volume * 0.08, "sawtooth");
     });
     return;
   }
@@ -1607,7 +1759,7 @@ function playCurrentBackgroundTrack() {
   if (!backgroundMusicUnlocked) return;
   if (!appCanPlayBackgroundMusic()) return;
   const music = getBackgroundMusic();
-  if (!music || music.volume <= 0) return;
+  if (!music) return;
   loadCurrentBackgroundTrack();
   music.play().catch(() => null);
 }
@@ -1627,7 +1779,7 @@ function resetBackgroundMusicToLaunchTrack() {
   backgroundMusic.dataset.trackId = "";
   loadCurrentBackgroundTrack();
   backgroundMusic.currentTime = 0;
-  if (backgroundMusicUnlocked && backgroundMusic.volume > 0 && appCanPlayBackgroundMusic()) {
+  if (backgroundMusicUnlocked && appCanPlayBackgroundMusic()) {
     backgroundMusic.play().catch(() => null);
   }
 }
@@ -1649,8 +1801,7 @@ function updateBackgroundMusicVolume() {
   if (!backgroundMusic) return;
   const settings = getSettings();
   backgroundMusic.volume = Math.max(0, Math.min(1, settings.musicVolume / 100)) * 0.42;
-  if (backgroundMusic.volume === 0 && !backgroundMusic.paused) backgroundMusic.pause();
-  if (backgroundMusic.volume > 0 && backgroundMusicUnlocked && backgroundMusic.paused && appCanPlayBackgroundMusic()) {
+  if (backgroundMusicUnlocked && backgroundMusic.paused && appCanPlayBackgroundMusic()) {
     playCurrentBackgroundTrack();
   }
 }
@@ -1660,14 +1811,14 @@ function unlockBackgroundMusic() {
   if (!music) return;
   backgroundMusicUnlocked = true;
   updateBackgroundMusicVolume();
-  if (music.volume > 0) playCurrentBackgroundTrack();
+  playCurrentBackgroundTrack();
 }
 
 function startBackgroundMusicOnLaunch() {
   const music = getBackgroundMusic();
   if (!music) return;
   updateBackgroundMusicVolume();
-  if (music.volume > 0 && appCanPlayBackgroundMusic()) {
+  if (appCanPlayBackgroundMusic()) {
     loadCurrentBackgroundTrack();
     music.play()
       .then(() => {
@@ -1679,7 +1830,7 @@ function startBackgroundMusicOnLaunch() {
 
 function pauseBackgroundMusicForLifecycle() {
   if (!backgroundMusic) return;
-  backgroundMusicWasPlayingBeforeHidden = !backgroundMusic.paused && backgroundMusic.volume > 0;
+  backgroundMusicWasPlayingBeforeHidden = backgroundMusicWasPlayingBeforeHidden || !backgroundMusic.paused;
   backgroundMusic.pause();
 }
 
@@ -2082,7 +2233,7 @@ function showSaveNameStep() {
 
 function renderSaveList() {
   const list = document.querySelector("#saveList");
-  const saves = getSaves();
+  const saves = getSaves().filter(save => save.game?.mode !== "Power Up Mode");
   list.replaceChildren();
   if (saves.length === 0) {
     const empty = document.createElement("p");
@@ -2137,6 +2288,7 @@ function renderOverwriteList() {
 function loadSave(id) {
   const save = getSaves().find((candidate) => candidate.id === id);
   if (!save) return;
+  if (save.game?.mode === "Power Up Mode") return;
   game = save.game;
   game.saveId = save.id;
   game.selected = null;
@@ -2284,6 +2436,7 @@ function defaultInventory(overrides = {}) {
 }
 
 const modeWinStreakLabels = {
+  ranked: { label: "Ranked", shortLabel: "RANK" },
   standardAiEasy: { label: "Standard / Play vs AI Easy", shortLabel: "SAI-E" },
   standardAiMedium: { label: "Standard / Play vs AI Medium", shortLabel: "SAI-M" },
   standardAiHard: { label: "Standard / Play vs AI Hard", shortLabel: "SAI-H" },
@@ -2335,6 +2488,7 @@ function maxModeWinStreak(streaks = {}) {
 
 function modeWinStreakKey(event = {}) {
   if (!event || event.submode === "Pass and Play") return "";
+  if (event.mode === "Ranked Mode") return "ranked";
   const modePrefix = event.mode === "Power Up Mode" ? "power" : "standard";
   if (event.submode === "Play vs AI") {
     const difficultySuffixes = {
@@ -2359,7 +2513,7 @@ function activeWinStreakSummaries(streaks = {}) {
   const normalized = normalizeModeWinStreaks(streaks);
   return Object.entries(modeWinStreakLabels)
     .map(([key, meta]) => ({ key, ...meta, streak: normalized[key] || 0 }))
-    .filter((item) => item.streak > 0);
+    .filter((item) => item.streak > 0 && !item.key.startsWith("power"));
 }
 
 function defaultAchievementStats(overrides = {}) {
@@ -2479,7 +2633,20 @@ function normalizeQuestState(profile = {}) {
   const state = profile.questState || {};
   const dailyPeriod = questPeriodKey("daily");
   const weeklyPeriod = questPeriodKey("weekly");
+  const dailyMail = [...(Array.isArray(state.dailyMail) ? state.dailyMail : [])];
+  if (state.dailyPeriod && state.dailyPeriod < dailyPeriod && !dailyMail.some(mail => mail.id === state.dailyPeriod)) {
+    const quests = dailyQuests.filter(quest => (state.daily?.[quest.metric] || 0) >= quest.target && !(state.dailyClaimed || []).includes(quest.id))
+      .map(({ id, title, exp, coins }) => ({ id, title, exp, coins }));
+    if (quests.length) dailyMail.push({ id: state.dailyPeriod, quests });
+  }
+  const weeklyMailId = `weekly:${state.weeklyPeriod}`;
+  if (state.weeklyPeriod && state.weeklyPeriod < weeklyPeriod && !dailyMail.some(mail => mail.id === weeklyMailId)) {
+    const quests = weeklyQuests.filter(quest => (state.weekly?.[quest.metric] || 0) >= quest.target && !(state.weeklyClaimed || []).includes(quest.id))
+      .map(({ id, title, exp, coins }) => ({ id, title, exp, coins }));
+    if (quests.length) dailyMail.push({ id: weeklyMailId, type: "weekly", period: state.weeklyPeriod, quests });
+  }
   return defaultQuestState({
+    dailyMail,
     dailyPeriod,
     weeklyPeriod,
     daily: state.dailyPeriod === dailyPeriod ? normalizeQuestProgress(state.daily) : defaultQuestProgress(),
@@ -2630,6 +2797,20 @@ function levelRewardText(reward) {
   return parts.join(" + ");
 }
 
+function renderLevelRewardBadges() {
+  const profile = getProfile();
+  const available = Boolean(profile && claimableLevelRewards(profile).length);
+  for (const [buttonId, badgeId, label] of [
+    ["menuProfile", "profileRewardBadge", "Profile"],
+    ["openPlayerProgression", "progressionRewardBadge", "Player Progression"],
+  ]) {
+    const badge = document.getElementById(badgeId);
+    const button = document.getElementById(buttonId);
+    if (badge) badge.hidden = !available;
+    if (button) button.setAttribute("aria-label", available ? label + ", rewards available" : label);
+  }
+}
+
 function claimableLevelRewards(profile = getProfile()) {
   const current = profileWithEconomy(profile || {});
   const claimed = new Set(normalizeClaimedLevelRewards(current));
@@ -2778,6 +2959,7 @@ function applyMatchRewardToProfile(username, didWin, event = {}) {
 
 async function applyRewardToFirebaseProfile(username, didWin) {
   const event = currentMatchAchievementEvent(username, didWin);
+  if (firebaseUser && game?.submode === "Separate Devices" && username !== getActiveUsername()) return null;
   if (!firebaseUser || username !== getActiveUsername()) return applyMatchRewardToProfile(username, didWin, event);
   const result = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
     const current = profileWithEconomy(localProfileFromFirebaseData(remoteProfile, {
@@ -2871,7 +3053,7 @@ function currentMatchAchievementEvent(username, didWin) {
 }
 
 function awardMatchRewards(winnerIndex, loserIndex) {
-  if (!game || game.submode === "Pass and Play" || game.rewardSummary) return null;
+  if (!game || isDraw(game) || game.submode === "Pass and Play" || game.rewardSummary) return null;
   const winnerName = game.players[winnerIndex].name;
   const loserName = game.players[loserIndex].name;
   const rewards = [
@@ -2883,14 +3065,14 @@ function awardMatchRewards(winnerIndex, loserIndex) {
 }
 
 async function awardMatchRewardsAsync(winnerIndex, loserIndex) {
-  if (!game || game.submode === "Pass and Play" || game.rewardSummary) return null;
-  const winnerName = game.players[winnerIndex].name;
-  const loserName = game.players[loserIndex].name;
-  const rewards = [
-    await applyRewardToFirebaseProfile(winnerName, true),
-    await applyRewardToFirebaseProfile(loserName, false),
-  ].filter(Boolean);
-  game.rewardSummary = rewards;
+  if (!game || isDraw(game) || game.submode === "Pass and Play" || game.rewardSummary) return null;
+  const finished = game;
+  const winnerName = finished.players[winnerIndex].name;
+  const loserName = finished.players[loserIndex].name;
+  const rewards = firebaseUser && finished.submode === "Separate Devices"
+    ? [await applyRewardToFirebaseProfile(getActiveUsername(), getActiveUsername() === winnerName)].filter(Boolean)
+    : [await applyRewardToFirebaseProfile(winnerName, true), await applyRewardToFirebaseProfile(loserName, false)].filter(Boolean);
+  finished.rewardSummary = rewards;
   return rewards;
 }
 
@@ -2902,6 +3084,30 @@ function rewardForUsername(username) {
 
 function xpPercent(exp, level) {
   return Math.min(100, (exp / levelRequirement(level)) * 100);
+}
+
+function trophyAmountMarkup(amount) {
+  return `${Number(amount)} <svg class="trophy-icon" role="img" aria-label="trophies" viewBox="0 0 24 24"><path d="M7 3h10v5c0 4-2 6-5 6S7 12 7 8V3Z" fill="#ffd45e" stroke="#b67c1e" stroke-width="1.4"/><path d="M7 5H3v3c0 3 2 4 5 4M17 5h4v3c0 3-2 4-5 4M12 14v5M8 21h8M9 19h6" fill="none" stroke="#d99b31" stroke-width="2" stroke-linecap="round"/></svg>`;
+}
+
+function rankedResultSummary() {
+  if (game?.mode !== "Ranked Mode") return null;
+  const index = activePlayerIndex();
+  const before = activeGameLobby()?.rankedProfiles?.[index];
+  if (!before) return null;
+  const delta = game.trophyChanges?.[index] ?? 0;
+  return { before: rankView(before), delta, after: Math.max(0, before.trophies + delta) };
+}
+
+function renderRankedResultHeader() {
+  const header = document.querySelector("#rankedResultHeader");
+  const summary = rankedResultSummary();
+  header.hidden = !summary;
+  header.innerHTML = summary ? `<span class="result-rank" title="${summary.before.name}" aria-label="${summary.before.name} rank">${summary.before.icon}</span><span>${trophyAmountMarkup(summary.before.progress)} (${summary.delta >= 0 ? "+" : ""}${trophyAmountMarkup(summary.delta)})</span>` : "";
+}
+
+function rewardTotalMarkup(coins, coinGain) {
+  return `Total: ${coinAmountMarkup(coins)} (+${coinAmountMarkup(coinGain)})`;
 }
 
 function renderRewardPanel(reward) {
@@ -2919,7 +3125,7 @@ function renderRewardPanel(reward) {
     ? ` Achievements: ${reward.unlockedAchievements.map((achievement) => achievement.title).join(", ")}.`
     : "";
   document.querySelector("#rewardXpText").textContent = `${reward.before.experience} / ${levelRequirement(reward.before.level)} XP${unlockedText}`;
-  document.querySelector("#rewardCoinText").innerHTML = `Total: ${coinAmountMarkup(reward.before.coins)} (+${coinAmountMarkup(reward.coins)})`;
+  document.querySelector("#rewardCoinText").innerHTML = rewardTotalMarkup(reward.before.coins, reward.coins);
 }
 
 function animateRewardPanel(reward) {
@@ -2991,7 +3197,7 @@ function animateCoinReward(reward) {
   const tick = (now) => {
     const progress = Math.min(1, (now - startedAt) / duration);
     const current = Math.round(from + ((to - from) * progress));
-    text.innerHTML = `Total: ${coinAmountMarkup(current)} (+${coinAmountMarkup(reward.coins)})`;
+    text.innerHTML = rewardTotalMarkup(current, reward.coins);
     if (progress < 1) window.requestAnimationFrame(tick);
   };
   window.requestAnimationFrame(tick);
@@ -3165,7 +3371,7 @@ async function deleteSignedInFirebaseAccount() {
     firebaseUser = null;
     firebaseProfile = null;
     stopFirebaseDataListeners();
-    stopPresenceHeartbeat();
+    stopPresenceSession();
     clearFirebaseRuntimeData();
     game = null;
     document.querySelector("#deleteAccountDialog").close();
@@ -3252,6 +3458,7 @@ function setActiveUsername(username) {
   renderGlobalMockSwitcher();
   renderNotificationBadge();
   renderInventoryBadge();
+  if (document.querySelector("#inviteFriendDialog").open) renderInviteFriendList();
   renderSelectedCharacter();
   if (showLobbyClosedPopupIfNeeded()) return;
   if (!getProfile(username)) {
@@ -3324,7 +3531,17 @@ function firebaseDocumentFromLocalProfile(profile) {
 }
 
 async function loadFirebaseProfile(user) {
+  let admitted;
+  try {
+    admitted = await withTimeout(updateUserPresence(user.uid, { inGame: false }), "Session verification", 15000);
+  } catch (error) {
+    await stopUserPresence();
+    await signOutCurrentUser();
+    throw error;
+  }
+  if (!admitted || firebaseUser?.uid !== user.uid) return null;
   const remoteProfile = await loadUserProfile(user.uid);
+  if (remoteProfile?.username) publishPlayerProfile(user.uid, remoteProfile).catch((error) => console.warn("Unable to publish friend profile", error));
   const profile = localProfileFromFirebase(user, remoteProfile);
   if (!profile) {
     firebaseProfile = null;
@@ -3338,13 +3555,18 @@ async function loadFirebaseProfile(user) {
   setActiveUsername(profile.username);
   await ensureDailyCheckInQuest();
   startFirebaseDataListeners(user.uid);
-  startPresenceHeartbeat();
+  startPresenceSession();
   if (restoreLocalActiveGameIfAvailable()) return profile;
   showScreen("mainMenuScreen");
   return profile;
 }
 
 async function signOutToLanding() {
+  if (firebaseUser) {
+    await withTimeout(updateUserPresence(firebaseUser.uid, {
+      username: getActiveUsername(), online: false,
+    }), "Sign out presence", 5000).catch(console.warn);
+  }
   resetBackgroundMusicToLaunchTrack();
   clearActiveGameState();
   resetSignedOutAuthView();
@@ -3379,18 +3601,91 @@ async function refreshFirebaseSocialData() {
 }
 
 function applyFirebaseFriends(friends) {
+  const uids = new Set(friends.map((friend) => friend.uid || friend.id));
+  for (const [uid, unsubscribe] of friendProfileSubscriptions) {
+    if (!uids.has(uid)) {
+      unsubscribe();
+      friendProfileSubscriptions.delete(uid);
+      friendProfiles.delete(uid);
+    }
+  }
+  for (const uid of uids) {
+    if (!uid || friendProfileSubscriptions.has(uid)) continue;
+    friendProfileSubscriptions.set(uid, subscribeToPlayerProfile(uid, (profile) => {
+      friendProfiles.set(uid, profile);
+      refreshFriendProfiles();
+    }, (error) => {
+      friendProfiles.delete(uid);
+      refreshFriendProfiles();
+      console.warn("Unable to read friend profile", error);
+    }));
+  }
+  const usernames = new Set(friends.map((friend) => friend.uid || friend.id));
+  for (const [username, unsubscribe] of friendPresenceSubscriptions) {
+    if (!usernames.has(username)) {
+      unsubscribe();
+      friendPresenceSubscriptions.delete(username);
+      friendPresence.delete(username);
+    }
+  }
+  for (const username of usernames) {
+    if (!username || friendPresenceSubscriptions.has(username)) continue;
+    const friend = friends.find((candidate) => (candidate.uid || candidate.id) === username);
+    const unsubscribe = subscribeToFriendPresence(friend.uid || friend.id, (presence) => {
+      friendPresence.set(username, presence);
+      refreshFriendPresence();
+    }, (error) => {
+      friendPresence.delete(username);
+      refreshFriendPresence();
+      console.warn("Friend presence unavailable", error);
+    });
+    friendPresenceSubscriptions.set(username, unsubscribe);
+  }
+
   firebaseFriends = friends.map((friend, index) => ({
     id: friend.uid || friend.id,
     uid: friend.uid || friend.id,
     username: friend.username,
     tag: friend.tag || "",
-    status: friend.status || "Available",
+    status: "Offline",
     selectedCharacterId: friend.selectedCharacterId || "",
     characterId: friend.selectedCharacterId || characters[(index + 1) % characters.length].id,
   }));
   firebaseFriends.forEach((friend) => {
     if (friend.username && friend.uid) firebaseUsernameUidMap[friend.username] = friend.uid;
   });
+  refreshFriendProfiles();
+}
+
+function refreshFriendProfiles() {
+  for (const friend of firebaseFriends) {
+    const profile = friendProfiles.get(friend.uid);
+    if (!profile) continue;
+    friend.username = profile.username;
+    friend.tag = profile.tag || "";
+    friend.selectedCharacterId = profile.selectedCharacterId;
+    friend.characterId = profile.selectedCharacterId;
+    friend.level = profile.level;
+    firebaseUsernameUidMap[profile.username] = friend.uid;
+  }
+  refreshFriendPresence();
+  if (openFriendProfileUid && document.querySelector("#publicProfileDialog").open) {
+    const friend = firebaseFriends.find((candidate) => candidate.uid === openFriendProfileUid);
+    if (friend) document.querySelector("#publicProfileContent").innerHTML = profileCardMarkup(friend.username);
+  }
+}
+
+function refreshFriendPresence() {
+  firebaseFriends.forEach((friend) => {
+    friend.status = presenceStatus(friendPresence.get(friend.uid));
+  });
+  if (document.querySelector("#inviteFriendDialog").open) renderInviteFriendList();
+  if (!document.querySelector("#friendsScreen").hidden) renderFriends();
+}
+
+function presenceStatus(presence) {
+  if (!presence?.online) return "Offline";
+  return presence.inGame ? "In Game" : "Available";
 }
 
 function applyFirebaseNotifications(notifications) {
@@ -3404,7 +3699,7 @@ function applyFirebaseNotifications(notifications) {
 }
 
 function applyFirebaseLobbies(lobbies) {
-  firebaseLobbies = lobbies.map((lobby) => ({
+  firebaseLobbies = lobbies.filter(lobby => lobby.mode !== "Power Up Mode").map((lobby) => ({
     chat: [],
     closedFor: [],
     minimizedFor: [],
@@ -3421,25 +3716,32 @@ function applyFirebaseLobbies(lobbies) {
     ? firebaseLobbies.find((lobby) => lobby.id === game.lobbyId)
     : null;
   if (applyRemoteCompletedLobby(activeLobby)) return;
-  const remoteSyncedAt = Number(activeLobby && activeLobby.gameState && activeLobby.gameState.syncedAt) || 0;
-  const localSyncedAt = Number(game && game.syncedAt) || 0;
-  if (activeLobby && activeLobby.gameState && remoteSyncedAt > localSyncedAt && !canActiveAccountAct()) {
+  const remoteSyncedAt = Number(activeLobby?.gameState?.revision || 0);
+  const localSyncedAt = Number(game?.revision || 0);
+  if (!game?.over && activeLobby?.gameState && sameMatch(game, activeLobby.gameState) && remoteSyncedAt > localSyncedAt) {
     game = JSON.parse(JSON.stringify(activeLobby.gameState));
     render();
   }
 }
 
 function applyRemoteCompletedLobby(lobby) {
-  if (!game || !lobby || game.over || lobby.status !== "complete") return false;
-  if (!lobby.gameState || !lobby.gameState.timeoutForfeit) return false;
-  const timedOutPlayer = lobby.gameState.timeoutForfeitPlayer || lobby.activeTurnPlayer || "";
-  const loserIndex = game.players.findIndex((player) => player.name === timedOutPlayer);
-  if (loserIndex === -1) return false;
-  const winnerIndex = loserIndex === 0 ? 1 : 0;
-  game.players[loserIndex].hands = [0, 0];
-  game.over = true;
+  if (!game || !lobby?.gameState?.over || !sameMatch(game, lobby.gameState)) return false;
+  if (completedResultScreens.has(game.matchId || game)) return true;
+  const remote = lobby.gameState;
+  if (isDraw(remote)) {
+    game = JSON.parse(JSON.stringify(remote));
+    game.rewardSummary = [];
+    showScreen("gameScreen");
+    showGameOver(null, null, { remote: true });
+    return true;
+  }
+  const loserIndex = remote.result?.loserIndex ?? remote.players.findIndex((player) => player.hands.every((value) => value === 0));
+  if (loserIndex < 0) return false;
+  const winnerIndex = remote.result?.winnerIndex ?? (loserIndex === 0 ? 1 : 0);
+  game = JSON.parse(JSON.stringify(remote));
+  game.rewardSummary = null;
   showScreen("gameScreen");
-  showGameOver(winnerIndex, loserIndex);
+  showGameOver(winnerIndex, loserIndex, { remote: true });
   return true;
 }
 
@@ -3526,7 +3828,7 @@ function stopTeaBoostTimerLoop() {
 }
 
 function activeScreenId() {
-  return ["mainMenuScreen", "profileScreen", "progressionScreen", "inventoryScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"]
+  return ["leaderboardScreen", "rankedQueueScreen", "mainMenuScreen", "profileScreen", "progressionScreen", "inventoryScreen", "friendsScreen", "notificationsScreen", "achievementsScreen", "questsScreen", "waitingLobbyScreen", "storeScreen", "modeScreen", "submodeScreen", "loadScreen", "settingsScreen", "helpScreen", "gameScreen"]
     .find((id) => !document.querySelector(`#${id}`).hidden) || "unknown";
 }
 
@@ -3540,18 +3842,23 @@ function writePresence() {
   }).catch((error) => console.warn("Unable to update presence", error));
 }
 
-function startPresenceHeartbeat() {
-  stopPresenceHeartbeat();
+function startPresenceSession() {
   writePresence();
-  presenceHeartbeatId = window.setInterval(writePresence, 30000);
 }
 
-function stopPresenceHeartbeat() {
-  if (presenceHeartbeatId) window.clearInterval(presenceHeartbeatId);
-  presenceHeartbeatId = null;
+function stopPresenceSession() {
+  stopUserPresence().catch((error) => console.warn("Unable to end presence session", error));
 }
 
 function stopFirebaseDataListeners() {
+  stopRankedProfile();
+  friendProfileSubscriptions.forEach((unsubscribe) => unsubscribe());
+  friendProfileSubscriptions.clear();
+  friendProfiles.clear();
+  openFriendProfileUid = null;
+  friendPresenceSubscriptions.forEach((unsubscribe) => unsubscribe());
+  friendPresenceSubscriptions.clear();
+  friendPresence.clear();
   firebaseDataUnsubscribers.forEach((unsubscribe) => unsubscribe());
   firebaseDataUnsubscribers = [];
   stopLobbyChatListener();
@@ -3578,6 +3885,7 @@ function subscribeToActiveLobbyChat() {
     }));
     const dialog = document.querySelector("#lobbyChatDialog");
     if (dialog && dialog.open) renderLobbyChat();
+    renderLobbyChatBadge();
   }, (error) => {
     console.warn("Firebase lobby chat listener failed", error);
   });
@@ -3586,6 +3894,7 @@ function subscribeToActiveLobbyChat() {
 function refreshCurrentScreenFromFirebaseData() {
   renderNotificationBadge();
   renderInventoryBadge();
+  if (document.querySelector("#inviteFriendDialog").open) renderInviteFriendList();
   if (!document.querySelector("#friendsScreen").hidden) renderFriends();
   if (!document.querySelector("#notificationsScreen").hidden) renderNotifications();
   if (!document.querySelector("#progressionScreen").hidden) renderProgression();
@@ -3600,6 +3909,7 @@ function refreshCurrentScreenFromFirebaseData() {
 
 function startFirebaseDataListeners(uid) {
   stopFirebaseDataListeners();
+  startRankedProfile(uid);
   const handleError = (label) => (error) => {
     console.warn(`Firebase ${label} listener failed`, error);
   };
@@ -3623,6 +3933,16 @@ function startFirebaseDataListeners(uid) {
   ];
 }
 
+let sessionEndMessage = "";
+window.addEventListener("account-session-rejected", () => {
+  sessionEndMessage = "This account is already signed in on another tab or device. Log out there or close that app, then try again.";
+  clearActiveGameState();
+});
+window.addEventListener("account-session-error", () => {
+  sessionEndMessage = "Unable to verify your session. Please check your connection and try logging in again.";
+  clearActiveGameState();
+});
+
 function startFirebaseAuthListener() {
   subscribeToAuthState(async (user) => {
     firebaseUser = user;
@@ -3630,11 +3950,15 @@ function startFirebaseAuthListener() {
     if (!user) {
       firebaseProfile = null;
       stopFirebaseDataListeners();
-      stopPresenceHeartbeat();
+      stopPresenceSession();
       clearFirebaseRuntimeData();
       resetSignedOutAuthView();
       previousScreen = "mainMenuScreen";
       showScreen("profileScreen");
+      if (sessionEndMessage) {
+        document.querySelector("#profileMessage").textContent = sessionEndMessage;
+        sessionEndMessage = "";
+      }
       return;
     }
     try {
@@ -3707,7 +4031,7 @@ function upsertLobby(lobby) {
   }
 }
 
-function updateLobby(id, updater) {
+function updateLobby(id, updater, options = {}) {
   const lobbies = getLobbies();
   const index = lobbies.findIndex((lobby) => lobby.id === id);
   if (index === -1) return null;
@@ -3716,7 +4040,7 @@ function updateLobby(id, updater) {
   setLobbies(lobbies);
   if (activeInviteId() === id) writeJson(ACTIVE_INVITE_KEY + ".data", updated);
   if (firebaseUser) {
-    writeFirebaseLobby(updated).catch((error) => console.warn("Unable to update lobby", error));
+    writeFirebaseLobby(updated, options).catch((error) => console.warn("Unable to update lobby", error));
   }
   return updated;
 }
@@ -3733,6 +4057,7 @@ function removeLobby(id) {
 }
 
 function closeGameLobbyIfHost() {
+  if (game?.mode === "Ranked Mode") return;
   if (!game || game.submode === "Pass and Play" || !game.lobbyId) return;
   const lobby = getLobbies().find((candidate) => candidate.id === game.lobbyId);
   if (lobby && getActiveUsername() === lobby.sender) {
@@ -3805,7 +4130,7 @@ async function discardLocalActiveGame() {
 function restoreLocalActiveGameIfAvailable() {
   const saved = readJson(ACTIVE_GAME_KEY, null);
   const activeUser = getActiveUsername();
-  if (!saved || saved.over || saved.submode === "Separate Devices") {
+  if (!saved || saved.over || saved.mode === "Power Up Mode" || saved.submode === "Separate Devices") {
     clearActiveGameState();
     return false;
   }
@@ -3826,12 +4151,14 @@ function restoreLocalActiveGameIfAvailable() {
 function serializableGameState() {
   if (!game || game.submode !== "Separate Devices" || !game.lobbyId) return null;
   game.syncedAt = Date.now();
+  game.revision = Number(game.revision || 0) + 1;
   return JSON.parse(JSON.stringify({
     ...game,
   }));
 }
 
 function restoreGameStateFromLobby(lobby) {
+  if (lobby?.mode === "Power Up Mode") return false;
   if (!lobby || !lobby.gameState) return false;
   game = JSON.parse(JSON.stringify(lobby.gameState));
   game.lobbyId = lobby.id;
@@ -3850,8 +4177,9 @@ function syncActiveGameStateSoon(delay = 350) {
   persistActiveGameState();
   if (!firebaseUser || !game || game.over || game.submode !== "Separate Devices" || !game.lobbyId) return;
   if (gameStateSyncTimer) window.clearTimeout(gameStateSyncTimer);
-  gameStateSyncTimer = window.setTimeout(() => {
+  const sync = () => {
     gameStateSyncTimer = null;
+    if (!game || game.over) return;
     const gameState = serializableGameState();
     if (!gameState) return;
     updateLobby(game.lobbyId, (lobby) => ({
@@ -3861,8 +4189,12 @@ function syncActiveGameStateSoon(delay = 350) {
       activeTurnPlayer: currentPlayer().name,
       lastGameStateAt: Date.now(),
       gameState,
-    }));
-  }, delay);
+    }), { syncGame: true });
+  };
+  // Reserve the revision and snapshot before a previous request can acknowledge.
+  // Deferring this lets an action response overwrite a locally completed End Turn.
+  if (game.mode === "Ranked Mode") sync();
+  else gameStateSyncTimer = window.setTimeout(sync, delay);
 }
 
 function markGamePlayerLeft(username) {
@@ -3947,6 +4279,7 @@ function updateForfeitTimer() {
 }
 
 function handleForfeitWin(absentUsername) {
+  if (endExpiredMatchIfNeeded()) return;
   if (!game || game.over) return;
   const loserIndex = game.players.findIndex((player) => player.name === absentUsername);
   const winnerIndex = loserIndex === 0 ? 1 : 0;
@@ -3955,7 +4288,7 @@ function handleForfeitWin(absentUsername) {
   if (panel) panel.hidden = true;
   game.players[loserIndex].hands = [0, 0];
   game.over = true;
-  updateLobby(game.lobbyId, (lobby) => ({ ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: null }));
+  game.endReason = "absence";
   showGameOver(winnerIndex, loserIndex);
 }
 
@@ -3973,6 +4306,7 @@ function forfeitActiveGameFor(username, lobbyId) {
     renderActiveLobbyPrompts();
     return;
   }
+  if (endExpiredMatchIfNeeded()) return;
   const loserIndex = game.players.findIndex((player) => player.name === username);
   const winnerIndex = loserIndex === 0 ? 1 : 0;
   if (loserIndex === -1) return;
@@ -3980,7 +4314,7 @@ function forfeitActiveGameFor(username, lobbyId) {
   if (timerPanel) timerPanel.hidden = true;
   game.players[loserIndex].hands = [0, 0];
   game.over = true;
-  updateLobby(targetLobbyId, (lobby) => ({ ...lobby, status: "complete", activeGame: false, absentPlayers: {}, gameState: null }));
+  game.endReason = "forfeit";
   showScreen("gameScreen");
   showGameOver(winnerIndex, loserIndex);
 }
@@ -4145,14 +4479,6 @@ function ensureProfileTag(profile, username) {
   return updated;
 }
 
-function parseFriendHandle(value) {
-  const [rawUsername, rawTag] = value.trim().split("#");
-  if (!rawUsername || rawTag === undefined) return null;
-  if (!isValidUsernameInput(rawUsername) || !isValidTagInput(rawTag)) return null;
-  const username = normalizeUsername(rawUsername);
-  const tag = normalizeTag(rawTag);
-  return username && tag ? { username, tag } : null;
-}
 
 function profileProgress(username) {
   const profile = getProfile(username);
@@ -4170,7 +4496,7 @@ function profileProgress(username) {
 function achievementItems(username) {
   const profile = getProfile(username);
   const earned = new Set(normalizeAchievements(profile || {}));
-  return achievements.map((achievement) => ({
+  return achievements.filter(achievement => achievement.id !== "powerPlayer").map((achievement) => ({
     ...achievement,
     earned: earned.has(achievement.id),
   }));
@@ -4253,6 +4579,7 @@ async function applyQuestProgressToActiveProfile(additions = {}) {
   firebaseProfile = result;
   writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
   renderQuestBadge();
+  renderLevelRewardBadges();
   return result;
 }
 
@@ -4264,6 +4591,7 @@ async function ensureDailyCheckInQuest() {
   const state = normalizeQuestState(profile);
   if (state.daily.checkIns > 0) {
     renderQuestBadge();
+  renderLevelRewardBadges();
     return;
   }
   dailyCheckInUsername = username;
@@ -4309,6 +4637,7 @@ async function claimQuestReward(type, questId) {
     renderQuests();
     renderProfile();
     renderQuestBadge();
+  renderLevelRewardBadges();
     return;
   }
   const updated = await updateUserProfileTransaction(firebaseUser.uid, (remoteProfile) => {
@@ -4350,6 +4679,7 @@ async function claimQuestReward(type, questId) {
   renderQuests();
   renderProfile();
   renderQuestBadge();
+  renderLevelRewardBadges();
 }
 
 async function claimLevelReward(level) {
@@ -4602,7 +4932,7 @@ function renderAchievements() {
   if (!list) return;
   const username = getActiveUsername() || "Guest";
   list.replaceChildren();
-  achievementItems(username).forEach((item) => {
+  achievementItems(username).filter(item => item.id !== "powerPlayer").forEach((item) => {
     const row = document.createElement("div");
     row.className = `achievement-row${item.earned ? " earned" : ""}`;
     row.innerHTML = `
@@ -4663,10 +4993,12 @@ function renderQuests() {
     renderQuestList("dailyQuestList", "daily", dailyQuests);
     renderQuestList("weeklyQuestList", "weekly", weeklyQuests);
     renderQuestBadge();
+  renderLevelRewardBadges();
   });
   renderQuestList("dailyQuestList", "daily", dailyQuests);
   renderQuestList("weeklyQuestList", "weekly", weeklyQuests);
   renderQuestBadge();
+  renderLevelRewardBadges();
 }
 
 function rewardIconMarkup(reward, claimed) {
@@ -4684,6 +5016,7 @@ function rewardIconMarkup(reward, claimed) {
 }
 
 function renderProgression() {
+  renderLevelRewardBadges();
   const timeline = document.querySelector("#progressionTimeline");
   if (!timeline) return;
   const profile = profileWithEconomy(getProfile() || {});
@@ -5042,8 +5375,10 @@ function publicProfileWinStreakMarkup(username) {
 
 function profileCardMarkup(username, options = {}) {
   const character = options.character || getCharacterForUsername(username);
-  const progress = profileProgress(username);
-  const tag = profileTag(username);
+  const friend = firebaseUser && firebaseFriends.find((candidate) => candidate.username === username);
+  const publicData = friend && friendProfiles.get(friend.uid);
+  const progress = friend ? { level: publicData?.level ?? "—" } : profileProgress(username);
+  const tag = friend ? publicData?.tag || friend.tag || "" : profileTag(username);
   const streakMarkup = publicProfileWinStreakMarkup(username);
   return `
     <div class="public-profile-card">
@@ -5062,12 +5397,15 @@ function profileCardMarkup(username, options = {}) {
 }
 
 function openPublicProfile(username, options = {}) {
+  openFriendProfileUid = firebaseFriends.find((friend) => friend.username === username)?.uid || null;
   const dialog = document.querySelector("#publicProfileDialog");
   document.querySelector("#publicProfileContent").innerHTML = profileCardMarkup(username, options);
   dialog.showModal();
 }
 
 function renderProfile() {
+  renderRankSummary();
+  renderLevelRewardBadges();
   const profile = getProfile();
   const activeUsername = getActiveUsername();
   const isSetup = !profile;
@@ -5078,7 +5416,6 @@ function renderProfile() {
   if (authFlowMode !== "createPassword") {
     document.querySelector("#profileUsername").value = profile ? profile.username : activeUsername;
   }
-  document.querySelector("#profileTag").value = profile ? `#${normalizeTag(profile.tag)}` : "";
   if (authFlowMode !== "createPassword") {
     document.querySelector("#profilePhone").value = profile ? (profile.email || profile.phone || "") : (firebaseUser ? firebaseUser.email || "" : "");
   }
@@ -5086,8 +5423,10 @@ function renderProfile() {
     ? ""
     : authIntroMessage();
   const username = activeUsername || (profile ? profile.username : "Guest");
-  const progress = profileProgress(username);
-  const tag = profileTag(username);
+  const friend = firebaseUser && firebaseFriends.find((candidate) => candidate.username === username);
+  const publicData = friend && friendProfiles.get(friend.uid);
+  const progress = friend ? { level: publicData?.level ?? "—" } : profileProgress(username);
+  const tag = friend ? publicData?.tag || friend.tag || "" : profileTag(username);
   document.querySelector("#profileSummary").innerHTML = `
     <button class="profile-avatar-button" id="profileAvatarButton" type="button" aria-label="Change avatar">
       ${characterMarkup(getCharacterForUsername(username), "profile-avatar")}
@@ -5096,10 +5435,7 @@ function renderProfile() {
       ${profile ? `
         <button class="edit-profile-icon" data-edit="username" type="button" aria-label="Edit username">✎</button>
       ` : ""}
-      <h2>${username}<span class="profile-tag">#${tag}</span></h2>
-      ${profile ? `
-        <button class="edit-profile-icon" data-edit="tag" type="button" aria-label="Edit tag">✎</button>
-      ` : ""}
+      <h2>${escapeHtml(username)}</h2>
     </div>
   `;
   const profileAvatarButton = document.querySelector("#profileAvatarButton");
@@ -5123,7 +5459,6 @@ function renderProfile() {
   const mockPanel = document.querySelector(".mock-testing-panel");
   if (mockPanel) mockPanel.hidden = !devToolsEnabled();
   renderAuthFlowPanels();
-  document.querySelector("#profileTagField").hidden = true;
   document.querySelector("#authFlow").hidden = Boolean(firebaseUser && profile);
   document.querySelector("#saveProfile").hidden = true;
   document.querySelector("#profileBack").hidden = !(firebaseUser && profile);
@@ -5254,7 +5589,7 @@ async function submitCreateAccountFlow() {
   pendingCreateAccount = null;
   authFlowMode = "landing";
   startFirebaseDataListeners(firebaseUser.uid);
-  startPresenceHeartbeat();
+  startPresenceSession();
   message.textContent = "Account created.";
   showScreen("mainMenuScreen");
   return true;
@@ -5336,8 +5671,8 @@ async function signInFromProfileFields() {
   message.textContent = "Logging in...";
   try {
     firebaseUser = await withTimeout(signInWithEmail(email, password), "Login", 20000);
-    await withTimeout(loadFirebaseProfile(firebaseUser), "Profile load", 20000);
-    return true;
+    const profile = await withTimeout(loadFirebaseProfile(firebaseUser), "Profile load", 20000);
+    return Boolean(profile && firebaseUser);
   } catch (error) {
     message.textContent = (error && error.code) === "app/timeout"
       ? error.message
@@ -5393,22 +5728,19 @@ function authErrorMessage(error) {
   if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") return "Email or password is incorrect.";
   if (code === "auth/requires-recent-login") return "Please sign out, sign back in, and try deleting the account again.";
   if (code === "auth/operation-not-allowed") return "Enable Email/Password sign-in in Firebase Authentication first.";
-  if ((error && error.code) === "permission-denied" || String(error && error.message).includes("permission-denied")) return "Publish the latest Firestore rules, then try again.";
+  if ((error && error.code) === "permission-denied" || String(error && error.message).includes("permission-denied")) return "The server denied this request. Please try again; if it continues, report the action that failed.";
   return "Firebase sign-in failed. Check your Firebase setup and try again.";
 }
 
-function openHandleEdit(kind) {
+function openHandleEdit() {
   const profile = getProfile();
   if (!profile) return;
-  pendingHandleEdit = kind;
   const input = document.querySelector("#editHandleInput");
-  document.querySelector("#editHandleTitle").textContent = kind === "tag" ? "Edit Tag" : "Edit Username";
-  document.querySelector("#editHandleMessage").textContent = kind === "tag"
-    ? "Tags must be exactly 4 letters or numbers."
-    : "Usernames can use letters, numbers, underscores, and periods. Max 18 characters.";
-  input.maxLength = kind === "tag" ? 4 : 18;
-  input.placeholder = kind === "tag" ? "A7K2" : "username";
-  input.value = kind === "tag" ? normalizeTag(profile.tag) : profile.username;
+  document.querySelector("#editHandleTitle").textContent = "Edit Username";
+  document.querySelector("#editHandleMessage").textContent = "Usernames can use letters, numbers, underscores, and periods. Max 18 characters.";
+  input.maxLength = 18;
+  input.placeholder = "username";
+  input.value = profile.username;
   document.querySelector("#editHandleDialog").showModal();
   input.focus();
 }
@@ -5435,23 +5767,14 @@ function updateProfileUsername(rawUsername) {
   return true;
 }
 
-function updateProfileTag(rawTag) {
-  if (!isValidTagInput(rawTag)) {
-    showInvalidInput("Tags can only use letters and numbers, and must be exactly 4 characters.");
-    return false;
-  }
-  const tag = normalizeTag(rawTag);
-  const username = getActiveUsername();
-  const profile = getProfile();
-  setProfile({ ...profile, tag }, username);
-  setMockUsers(getMockUsers().map((user) => user.username === username ? { ...user, tag } : user));
-  return true;
-}
 
 function renderFriends() {
   const list = document.querySelector("#friendList");
   const requestsEl = document.querySelector("#pendingFriendRequests");
-  const friends = getFriends();
+  const friends = [...getFriends()].sort((a, b) =>
+    Number(b.status === "Available") - Number(a.status === "Available") ||
+    a.username.localeCompare(b.username, undefined, { sensitivity: "base" })
+  );
   list.replaceChildren();
   requestsEl.replaceChildren();
   renderPendingFriendRequests(requestsEl);
@@ -5517,22 +5840,22 @@ function renderPendingFriendRequests(container) {
 }
 
 async function addFriendFromFields() {
-  const handle = parseFriendHandle(document.querySelector("#friendUsername").value);
+  const rawUsername = document.querySelector("#friendUsername").value.trim();
+  const username = normalizeUsername(rawUsername);
   const message = document.querySelector("#addFriendMessage");
-  if (!handle) {
-    message.textContent = "Enter your friend's username and tag, like grace#A7K2.";
+  if (!username || !isValidUsernameInput(rawUsername)) {
+    message.textContent = "Enter your friend's username (letters, numbers, underscores, and periods; max 18 characters).";
     return false;
   }
-  const { username, tag } = handle;
   const profile = getProfile();
-  if (profile && profile.username === username && normalizeTag(profile.tag) === tag) {
+  if (profile && normalizeUsername(profile.username) === username) {
     message.textContent = "You cannot add your own profile.";
     return false;
   }
   let user = null;
   if (firebaseUser) {
     try {
-      user = await findPublicProfile(username, tag);
+      user = await findPublicProfile(username);
     } catch (error) {
       message.textContent = "Unable to search for that profile right now.";
       console.warn("Firebase friend lookup failed", error);
@@ -5540,7 +5863,7 @@ async function addFriendFromFields() {
     }
   } else {
     const users = getMockUsers();
-    user = users.find((candidate) => candidate.username.toLowerCase() === username.toLowerCase() && normalizeTag(candidate.tag) === tag);
+    user = users.find((candidate) => candidate.username.toLowerCase() === username.toLowerCase());
   }
   if (!user) {
     document.querySelector("#addFriendDialog").close();
@@ -5811,7 +6134,10 @@ function openSeparateDevicesInvite() {
 
 function renderInviteFriendList() {
   const list = document.querySelector("#inviteFriendList");
-  const friends = getFriends();
+  const friends = [...getFriends()].sort((a, b) =>
+    Number(b.status === "Available") - Number(a.status === "Available") ||
+    a.username.localeCompare(b.username, undefined, { sensitivity: "base" })
+  );
   list.replaceChildren();
   if (friends.length === 0) {
     const empty = document.createElement("p");
@@ -5824,6 +6150,7 @@ function renderInviteFriendList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "invite-friend-card";
+    button.disabled = friendIsOffline(friend);
     button.innerHTML = `
       ${characterMarkup(character)}
       <strong>${friend.username}</strong>
@@ -5931,7 +6258,7 @@ async function sendGameInvite(friendId) {
   };
   if (firebaseUser && friend.uid) {
     try {
-      await sendFirebaseGameInvite(notification, friend.uid);
+      await sendFirebaseGameInvite(notification, friend.uid, { existing: Boolean(existingLobby) });
       auditUserAction("game_invite_sent", `Sent ${pendingMode} invite to ${friend.username}.`, {
         lobbyId: notification.id,
         recipient: friend.username,
@@ -5958,7 +6285,7 @@ async function sendGameInvite(friendId) {
 function renderNotifications() {
   const list = document.querySelector("#notificationList");
   const activeUser = getActiveUsername();
-  const allNotifications = getNotifications();
+  const allNotifications = getNotifications().filter(notice => notice.mode !== "Power Up Mode");
   let notifications = allNotifications.filter((notice) => !notice.recipient || notice.recipient === activeUser);
   const activeAccountLabel = document.querySelector("#activeAccountLabel");
   if (activeAccountLabel) activeAccountLabel.textContent = activeUser ? `Viewing as ${activeUser}` : "Viewing as you";
@@ -5970,18 +6297,21 @@ function renderNotifications() {
     renderNotificationBadge();
   }
   list.replaceChildren();
-  if (notifications.length === 0) {
+  const dailyMail = normalizeQuestState(getProfile() || {}).dailyMail;
+  dailyMail.slice().reverse().forEach(mail => list.append(dailyRewardMailCard(mail)));
+  if (notifications.length === 0 && dailyMail.length === 0) {
     const empty = document.createElement("p");
-    empty.textContent = "No invites yet.";
+    empty.textContent = "No mail yet.";
     list.append(empty);
     document.querySelector("#deleteAllNotifications").hidden = true;
     return;
   }
-  document.querySelector("#deleteAllNotifications").hidden = false;
+  document.querySelector("#deleteAllNotifications").hidden = notifications.length === 0;
   notifications.forEach((notice) => {
     const row = document.createElement("div");
     row.className = "notification-row";
     row.classList.toggle("read", !notice.unread);
+    row.classList.toggle("pending-friend-request", notice.type === "friendRequest" && notice.status !== "accepted");
     const isSystemNotice = notice.type === "system";
     row.innerHTML = `
       <div>
@@ -6034,7 +6364,7 @@ function renderNotificationBadge() {
   const badge = document.querySelector("#notificationBadge");
   if (!badge) return;
   const activeUser = getActiveUsername();
-  badge.hidden = !getNotifications().some((notice) => notice.unread && (!notice.recipient || notice.recipient === activeUser));
+  badge.hidden = !normalizeQuestState(getProfile() || {}).dailyMail.length && !getNotifications().some((notice) => notice.unread && (!notice.recipient || notice.recipient === activeUser));
 }
 
 function pendingIncomingGameInvite() {
@@ -6207,6 +6537,8 @@ function renderLobbyChatPlayers(invite) {
 }
 
 function renderWaitingLobby() {
+  subscribeToActiveLobbyChat();
+  renderLobbyChatBadge();
   const invite = getActiveInvite();
   const activeUser = getActiveUsername();
   const accountLabel = document.querySelector("#lobbyAccountLabel");
@@ -6369,6 +6701,31 @@ async function joinLobby(lobbyId, username) {
   }
 }
 
+function lobbyChatReadKey() {
+  return `chopsticks.chatRead.${getActiveUsername()}.${activeInviteId()}`;
+}
+
+function lobbyChatMessageKey(message) {
+  return message.id || `${message.sentAt}:${message.sender}:${message.text}`;
+}
+
+function markLobbyChatRead() {
+  const messages = getLobbyChat();
+  if (messages.length) writeJson(lobbyChatReadKey(), messages.map(lobbyChatMessageKey));
+  renderLobbyChatBadge();
+}
+
+function renderLobbyChatBadge() {
+  const badge = document.querySelector("#lobbyChatBadge");
+  const button = document.querySelector("#openLobbyChat");
+  if (!badge || !button) return;
+  const read = new Set(readJson(lobbyChatReadKey(), []));
+  const unread = getLobbyChat().some((message) =>
+    message.sender !== getActiveUsername() && !read.has(lobbyChatMessageKey(message)));
+  badge.hidden = !unread;
+  button.setAttribute("aria-label", unread ? "Open Chat Room, unread messages" : "Open Chat Room");
+}
+
 function renderLobbyChat() {
   const log = document.querySelector("#lobbyChatLog");
   if (!log) return;
@@ -6393,6 +6750,7 @@ function renderLobbyChat() {
     log.append(line);
   });
   log.scrollTop = log.scrollHeight;
+  if (document.querySelector("#lobbyChatDialog").open) markLobbyChatRead();
 }
 
 function formatChatText(text) {
@@ -6924,6 +7282,7 @@ document.querySelector("#lobbyInvitePlayer").addEventListener("click", playMenuS
 document.querySelector("#openLobbyChat").addEventListener("click", () => {
   renderLobbyChat();
   document.querySelector("#lobbyChatDialog").showModal();
+  markLobbyChatRead();
 });
 document.querySelector("#openLobbyChat").addEventListener("click", playMenuSound);
 document.querySelector("#sendLobbyChat").addEventListener("click", (event) => {
@@ -6956,7 +7315,7 @@ document.querySelector("#confirmRenameAccount").addEventListener("click", playMe
 document.querySelector("#confirmHandleEdit").addEventListener("click", (event) => {
   event.preventDefault();
   const value = document.querySelector("#editHandleInput").value.trim();
-  const updated = pendingHandleEdit === "tag" ? updateProfileTag(value) : updateProfileUsername(value);
+  const updated = updateProfileUsername(value);
   if (!updated) return;
   document.querySelector("#editHandleDialog").close();
   renderProfile();
@@ -7150,9 +7509,6 @@ document.querySelector("#messageLog").addEventListener("click", () => {
   document.querySelector("#messageLog").classList.add("expanded");
   renderLog();
 });
-document.querySelector("#newGame").addEventListener("click", closeGameLobbyForActivePlayer);
-document.querySelector("#newGame").addEventListener("click", () => showScreen("modeScreen"));
-document.querySelector("#newGame").addEventListener("click", playMenuSound);
 document.querySelector("#returnToLobby").addEventListener("click", (event) => {
   event.preventDefault();
   document.querySelector("#gameOverDialog").close();
@@ -7239,6 +7595,7 @@ document.querySelector("#backStartupNotice").addEventListener("click", () => {
 });
 
 function chooseMode(mode) {
+  if (mode === "Power Up Mode") return; // Preserved for a future release.
   pendingMode = mode;
   document.querySelector("#submodeModeLabel").textContent = mode;
   renderAiDifficultyOptions();
@@ -7381,3 +7738,246 @@ startBackgroundMusicOnLaunch();
 previousScreen = "mainMenuScreen";
 showScreen("profileScreen");
 startFirebaseAuthListener();
+
+function rankedErrorText(error) {
+  console.warn("Ranked service", error);
+  return "Ranked is unavailable right now. Please try again shortly.";
+}
+function renderRankSummary() {
+  const view = rankView(rankedProfileData || {});
+  const label = rankedProfileData ? `${view.icon} ${view.name} · ${trophyAmountMarkup(view.progress)}` : escapeHtml(rankedError || "Rank: loading…");
+  document.querySelector("#profileRank").innerHTML = firebaseUser ? label : "";
+  document.querySelector("#leaderboardOwnRank").innerHTML = label;
+}
+function stopRankedProfile() {
+  stopRankWatch?.(); stopRankWatch=null;
+  stopLeaderboardWatch?.(); stopLeaderboardWatch=null;
+  clearTimeout(rankedQueueTimer); rankedQueueRunning=false;
+  rankedIdentity=null; rankedProfileData=null; rankedError="";
+}
+function startRankedProfile(uid) {
+  rankedIdentity=uid;
+  stopRankWatch=watchRankedProfile(uid, value=>{ rankedProfileData=value; renderRankSummary(); }, error=>{rankedError=rankedErrorText(error);renderRankSummary();});
+  refreshRankedAccount().catch(error=>{ if(rankedIdentity===uid){rankedError=rankedErrorText(error);renderRankSummary();} });
+}
+async function enterRankedMatch(id) {
+  const lobby=await getRankedLobby(id);
+  if(!lobby) throw new Error("Match no longer exists.");
+  clearTimeout(rankedQueueTimer); rankedQueueRunning=false;
+  firebaseLobbies=[lobby,...firebaseLobbies.filter(item=>item.id!==id)];
+  pendingMode="Ranked Mode"; pendingSubmode="Separate Devices";
+  setActiveInviteId(id); setActiveInviteData(lobby);
+  rankedSyncError="";rankedTurnPending=false;
+  game=JSON.parse(JSON.stringify(lobby.gameState));
+  if(game.over) { showScreen("gameScreen"); await showGameOver(game.result.winnerIndex,game.result.loserIndex,{remote:true}); }
+  else { startTurnTimerLoop();showScreen("gameScreen");render();writePresence(); }
+}
+async function pollRankedQueue() {
+  if(!rankedQueueRunning || !firebaseUser) return;
+  const uid=firebaseUser.uid;
+  try {
+    rankedQueueRequest=rankedCall("rankedQueue");
+    const result=await rankedQueueRequest;
+    if(firebaseUser?.uid!==uid) return;
+    if(result.matchId) { await enterRankedMatch(result.matchId); return; }
+    if(rankedQueueRunning) document.querySelector("#rankedQueueStatus").textContent="Searching for an opponent…";
+  } catch(error) {
+    if(rankedQueueRunning) document.querySelector("#rankedQueueStatus").textContent=rankedErrorText(error);
+    rankedQueueRunning=false;
+  } finally {rankedQueueRequest=null;}
+  if(rankedQueueRunning) rankedQueueTimer=setTimeout(pollRankedQueue,5000);
+}
+async function openRankedQueue() {
+  if (game && !game.over) { showScreen("gameScreen"); render(); return; }
+  if(!firebaseUser) {showScreen("profileScreen");return;}
+  showScreen("rankedQueueScreen");
+  document.querySelector("#rankedQueueStatus").textContent="Joining the queue…";
+  rankedQueueRunning=true;
+  await pollRankedQueue();
+}
+async function cancelRankedQueue() {
+  const button=document.querySelector("#cancelRankedQueue");button.disabled=true;
+  rankedQueueRunning=false;clearTimeout(rankedQueueTimer);
+  try {
+    await rankedQueueRequest?.catch(()=>{});
+    const result=await rankedCall("rankedQueue",{cancel:true});
+    // A match claimed before cancellation must be resumed, never silently abandoned.
+    if(result.matchId) await enterRankedMatch(result.matchId);
+    else showScreen("modeScreen");
+  } catch(error) {document.querySelector("#rankedQueueStatus").textContent=rankedErrorText(error);}
+  finally {button.disabled=false;}
+}
+function renderLeaderboardRank() {
+  stopLeaderboardWatch?.();
+  const rank=Number(document.querySelector("#leaderboardRank").value);
+  const status=document.querySelector("#leaderboardStatus"), list=document.querySelector("#leaderboardList");
+  list.replaceChildren();status.textContent="Loading players…";
+  stopLeaderboardWatch=watchRankedLeaderboard(rank, players=>{
+    players.sort((a,b)=>b.trophies-a.trophies || a.username.localeCompare(b.username) || a.uid.localeCompare(b.uid));
+    status.textContent=players.length ? `${players.length} players · ${RANKS[rank].name}` : "No players in this rank yet.";
+    list.replaceChildren(...players.map(player=>{
+      const row=document.createElement("li"); row.className=player.uid===firebaseUser?.uid?"leaderboard-self":"";
+      const name=document.createElement("strong"), score=document.createElement("span");
+      name.textContent=player.username+(player.uid===firebaseUser?.uid?" (you)":"");score.innerHTML=trophyAmountMarkup(rankView(player).progress);
+      row.append(name,score);return row;
+    }));
+  },error=>{status.textContent=rankedErrorText(error);});
+}
+function openLeaderboard() {
+  showScreen("leaderboardScreen");renderRankSummary();
+  const select=document.querySelector("#leaderboardRank");
+  select.replaceChildren(...RANKS.map((rank,i)=>{const option=document.createElement("option");option.value=i;option.textContent=`${rank.icon} ${rank.name}`;return option;}));
+  select.value=rankedProfileData?.rank||0;renderLeaderboardRank();
+  refreshRankedAccount().catch(error=>{document.querySelector("#leaderboardStatus").textContent=rankedErrorText(error);});
+}
+window.addEventListener("ranked-state", event=>{
+  const confirmed=event.detail;
+  if(game?.matchId!==confirmed.matchId) return;
+  rankedSyncError="";
+  if(confirmed.over) {
+    // Existing completion flow handles awards and the result screen.
+    applyRemoteCompletedLobby({gameState:confirmed});
+  } else if(confirmed.revision >= game.revision) {
+    game=JSON.parse(JSON.stringify(confirmed));render();
+  }
+});
+document.querySelector("#rankedMode").addEventListener("click",openRankedQueue);
+document.querySelector("#cancelRankedQueue").addEventListener("click",cancelRankedQueue);
+document.querySelector("#menuLeaderboard").addEventListener("click",openLeaderboard);
+document.querySelector("#leaderboardRank").addEventListener("change",renderLeaderboardRank);
+document.querySelector("#leaderboardBack").addEventListener("click",()=>{stopLeaderboardWatch?.();stopLeaderboardWatch=null;showScreen("mainMenuScreen");});
+
+async function refreshRankedAccount() {
+  const user = firebaseUser;
+  if (!user) return;
+  await rankedCall("rankedProfile");
+  const remote = await loadUserProfile(user.uid);
+  if (firebaseUser?.uid !== user.uid || !remote) return;
+  firebaseProfile = localProfileFromFirebase(user, remote);
+  writeAccountJson(PROFILE_KEY, firebaseProfile, firebaseProfile.username);
+  if (activeScreenId() === "profileScreen") renderProfile();
+}
+
+window.addEventListener("ranked-sync-error", event => {
+  if (game?.matchId !== event.detail.matchId || game.over) return;
+  rankedSyncError = "Your move could not reach the server. Check your connection.";
+  render();
+});
+
+// Capture the first touch before the existing navigation handlers run.
+const bookmarkButtons = [...document.querySelectorAll('.bookmark-navigation .icon-button')];
+bookmarkButtons.forEach(button => {
+  button.addEventListener('click', event => {
+    if (!button.closest('.bookmark-navigation')) return;
+    const touch = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    if (touch && event.detail !== 0 && !button.classList.contains('flap-open')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      bookmarkButtons.forEach(other => other.classList.toggle('flap-open', other === button));
+      return;
+    }
+    bookmarkButtons.forEach(other => other.classList.remove('flap-open'));
+  }, true);
+});
+document.addEventListener('pointerdown', event => {
+  if (!bookmarkButtons.some(button => button.contains(event.target))) {
+    bookmarkButtons.forEach(button => button.classList.remove('flap-open'));
+  }
+});
+
+function dailyMailTotals(mail) {
+  return mail.quests.reduce((total, quest) => ({ exp: total.exp + quest.exp, coins: total.coins + quest.coins }), { exp: 0, coins: 0 });
+}
+function dailyRewardMailCard(mail) {
+  const totals = dailyMailTotals(mail);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "daily-mail-card";
+  button.innerHTML = `<span aria-hidden="true">📔</span><span><strong>${mail.type === "weekly" ? "Weekly" : "Daily"} quest rewards</strong><small>${escapeHtml(mail.period || mail.id)}</small><span>${totals.exp} XP · ${coinAmountMarkup(totals.coins)}</span></span><span aria-hidden="true">›</span>`;
+  button.addEventListener("click", () => openDailyRewardMail(mail));
+  return button;
+}
+function openDailyRewardMail(mail) {
+  const dialog = document.querySelector("#dailyRewardMailDialog");
+  const totals = dailyMailTotals(mail);
+  document.querySelector("#questMailTitle").textContent = `${mail.type === "weekly" ? "Weekly" : "Daily"} quest rewards`;
+  document.querySelector("#questMailDescription").textContent = `Your completed ${mail.type === "weekly" ? "weekly" : "daily"} quests had unclaimed rewards. They are saved here for you.`;
+  document.querySelector("#dailyMailDate").textContent = mail.period || mail.id;
+  document.querySelector("#dailyMailDetails").innerHTML = mail.quests.map(quest => `<div class="daily-mail-quest"><strong>${escapeHtml(quest.title)}</strong><span>${quest.exp} XP · ${coinAmountMarkup(quest.coins)}</span></div>`).join("");
+  document.querySelector("#dailyMailTotal").innerHTML = `Total: ${totals.exp} XP · ${coinAmountMarkup(totals.coins)}`;
+  const button = document.querySelector("#collectDailyMail");
+  button.disabled = false;
+  document.querySelector("#dailyMailError").textContent = "";
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      await collectDailyRewardMail(mail.id);
+      dialog.close();
+      renderNotifications(); renderNotificationBadge(); renderProfile(); renderLevelRewardBadges();
+    } catch (error) {
+      document.querySelector("#dailyMailError").textContent = "Could not collect rewards. Please try again.";
+      button.disabled = false;
+    }
+  };
+  if (!dialog.open) dialog.showModal();
+}
+function applyDailyMailReward(profile, id) {
+  const state = normalizeQuestState(profile);
+  const mail = state.dailyMail.find(item => item.id === id);
+  if (!mail) return profile;
+  const totals = dailyMailTotals(mail);
+  const rewarded = addExperience(profileWithEconomy(profile, {
+    coins: normalizeEconomy(profile).coins + totals.coins,
+    questState: { ...state, dailyMail: state.dailyMail.filter(item => item.id !== id) },
+  }), totals.exp);
+  return applyQuestProgressToProfile(rewarded, { coinsEarned: totals.coins });
+}
+async function collectDailyRewardMail(id) {
+  if (!firebaseUser || !firebaseProfile) {
+    setProfile(applyDailyMailReward(getProfile(), id), getActiveUsername());
+    return;
+  }
+  const updated = await updateUserProfileTransaction(firebaseUser.uid, remote => {
+    const profile = localProfileFromFirebaseData(remote, { fallbackUsername: firebaseProfile.username, fallbackEmail: firebaseProfile.email || "" });
+    const next = applyDailyMailReward(profile, id);
+    return { write: firebaseDocumentFromLocalProfile(next), result: next };
+  });
+  firebaseProfile = updated;
+  writeAccountJson(PROFILE_KEY, updated, updated.username);
+}
+let dailyMailDisplayedPeriod = questPeriodKey("daily");
+window.setInterval(() => {
+  const period = questPeriodKey("daily");
+  if (!getActiveUsername() || period === dailyMailDisplayedPeriod) return;
+  dailyMailDisplayedPeriod = period;
+  renderNotificationBadge();
+  if (!document.querySelector("#notificationsScreen").hidden && !document.querySelector("#dailyRewardMailDialog").open) renderNotifications();
+}, 1000);
+
+// Local development helper for testing daily reward rollover.
+if (import.meta.env.DEV) {
+  const resetDailyButton = document.createElement("button");
+  resetDailyButton.textContent = "Reset daily quests (test)";
+  resetDailyButton.type = "button";
+  resetDailyButton.id = "resetDailyTest";
+  document.querySelector("#notificationsScreen .menu-card").append(resetDailyButton);
+  resetDailyButton.onclick = async () => {
+    resetDailyButton.disabled = true;
+    try {
+      if (!firebaseUser) throw new Error("Sign in first");
+      const next = await updateUserProfileTransaction(firebaseUser.uid, remote => {
+        const state = remote.questState || {};
+        const used = new Set((state.dailyMail || []).map(mail => mail.id));
+        const date = new Date(); date.setDate(date.getDate() - 1);
+        while (used.has(questPeriodKey("daily", date))) date.setDate(date.getDate() - 1);
+        const expired = { ...remote, questState: { ...state, dailyPeriod: questPeriodKey("daily", date) } };
+        const profile = localProfileFromFirebaseData(expired, { fallbackUsername: firebaseProfile.username, fallbackEmail: firebaseProfile.email || "" });
+        return { write: firebaseDocumentFromLocalProfile(profile), result: profile };
+      });
+      firebaseProfile = next;
+      writeAccountJson(PROFILE_KEY, next, next.username);
+      renderNotifications(); renderNotificationBadge();
+      resetDailyButton.textContent = "Daily quests reset";
+    } catch (error) { resetDailyButton.textContent = error.message; resetDailyButton.disabled = false; }
+  };
+}

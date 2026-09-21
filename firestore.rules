@@ -92,13 +92,20 @@ service cloud.firestore {
 
     function validPublicProfile() {
       return request.resource.data.keys().hasOnly([
-          "uid", "username", "tag", "selectedCharacterId", "updatedAt"
+          "uid", "username", "tag", "selectedCharacterId", "updatedAt", "presence"
         ])
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.username is string
         && request.resource.data.tag is string
         && request.resource.data.username.size() <= 18
         && request.resource.data.tag.size() <= 4
+        && (!('presence' in request.resource.data) || (
+          request.resource.data.presence is map
+          && request.resource.data.presence.keys().hasOnly(["online", "inGame", "lastSeenAt"])
+          && request.resource.data.presence.online is bool
+          && request.resource.data.presence.inGame is bool
+          && request.resource.data.presence.lastSeenAt is timestamp
+        ))
         && optionalString(request.resource.data, "selectedCharacterId", 40);
     }
 
@@ -183,6 +190,23 @@ service cloud.firestore {
       }
     }
 
+    // Public game identity only. Private account/economy documents stay private.
+    match /playerProfiles/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isUser(uid)
+        && request.resource.data.keys().hasOnly(["uid", "username", "tag", "selectedCharacterId", "level", "updatedAt"])
+        && request.resource.data.uid == uid
+        && request.resource.data.username is string
+        && request.resource.data.username.size() <= 18
+        && request.resource.data.tag is string
+        && request.resource.data.tag.size() <= 4
+        && request.resource.data.selectedCharacterId is string
+        && request.resource.data.selectedCharacterId.size() <= 40
+        && request.resource.data.level is int
+        && request.resource.data.level >= 1;
+      allow delete: if isUser(uid);
+    }
+
     match /publicProfiles/{profileId} {
       allow read: if signedIn();
       allow create: if signedIn()
@@ -209,17 +233,31 @@ service cloud.firestore {
         && resource.data.uid == request.auth.uid;
     }
 
+    match /rankedPlayers/{uid} {
+      allow read: if signedIn();
+      allow write: if false;
+      match /rewards/{season} { allow read: if isUser(uid); allow write: if false; }
+    }
+    match /rankedQueue/{uid} { allow read, write: if false; }
+    match /rankedInternal/{id} { allow read, write: if false; }
+
     match /lobbies/{lobbyId} {
       allow read: if signedIn()
         && request.auth.uid in resource.data.participantUids;
       allow create: if signedIn()
+        && request.resource.data.mode != "Ranked Mode"
+        && !("ranked" in request.resource.data)
         && validLobby()
         && request.auth.uid in request.resource.data.participantUids
         && request.resource.data.senderUid == request.auth.uid;
       allow update: if signedIn()
+        && !("ranked" in resource.data)
+        && !("ranked" in request.resource.data)
+        && request.resource.data.mode != "Ranked Mode"
         && request.auth.uid in resource.data.participantUids
         && validLobby();
       allow delete: if signedIn()
+        && !("ranked" in resource.data)
         && request.auth.uid in resource.data.participantUids;
 
       match /messages/{messageId} {

@@ -1,0 +1,23 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "presence": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid && newData.child('activeSession').isString() && (newData.child('activeSession').val() === data.child('activeSession').val() || !data.child('activeSession').exists() || !data.child('sessions').child(data.child('activeSession').val()).exists())",
+        ".validate": "newData.hasChildren(['activeSession'])",
+        "activeSession": { ".validate": "newData.isString() && newData.val().length <= 128" },
+        "sessions": {
+          "$session": {
+            ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+            ".validate": "$session === newData.parent().parent().child('activeSession').val() && newData.hasChildren(['inGame'])",
+            "inGame": { ".validate": "newData.isBoolean()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

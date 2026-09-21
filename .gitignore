@@ -7,3 +7,6 @@ www/
 ios/App/build/
 ios/Pods/
 ios/DerivedData/
+
+# Local development server logs
+vite-*.log

@@ -23,9 +23,13 @@
       </section>
 
       <section class="menu-screen" id="mainMenuScreen">
-        <div class="menu-card main-menu-card">
+        <div class="menu-card main-menu-card bookmark-navigation">
+          <button class="icon-button leaderboard-corner" id="menuLeaderboard" type="button" aria-label="Leaderboard" title="Leaderboard">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 21V12h6V4h6v11h6v6H3ZM9 12v9m6-6v6M11 8h2"/></svg>
+          </button>
           <button class="icon-button notification-corner" id="menuNotifications" type="button" aria-label="Notifications">
-            <span id="notificationBadge" aria-hidden="true" hidden>!</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg>
+            <span id="notificationBadge" class="level-reward-badge" aria-hidden="true" hidden></span>
           </button>
           <button class="icon-button quest-corner" id="menuQuests" type="button" aria-label="Quests">
             <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -34,16 +38,14 @@
               <path d="M11 9h5"></path>
               <path d="M11 13h4"></path>
             </svg>
-            <span id="questBadge" aria-hidden="true" hidden>!</span>
+            <span id="questBadge" class="level-reward-badge" aria-hidden="true" hidden></span>
           </button>
           <button class="icon-button inventory-corner" id="menuInventory" type="button" aria-label="Cafe Inventory">
             <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M5 9.5c.45-1.2 1.6-2 3-2h8c1.4 0 2.55.8 3 2l1.2 9.5a2 2 0 0 1-2 2H5.8a2 2 0 0 1-2-2L5 9.5Z"></path>
-              <path d="M8.5 8.2A3.5 3.5 0 0 1 12 4.5a3.5 3.5 0 0 1 3.5 3.7"></path>
-              <path d="M8.5 13.5h7"></path>
-              <path d="M9.5 17h5"></path>
+              <path d="M9 5V4a3 3 0 0 1 6 0v1M6 10a6 6 0 0 1 12 0v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"></path>
+              <path d="M9 14h6v4H9Z"></path>
             </svg>
-            <span id="inventoryBadge" aria-hidden="true" hidden>!</span>
+            <span id="inventoryBadge" class="level-reward-badge" aria-hidden="true" hidden></span>
           </button>
           <button class="icon-button settings-corner" id="menuSettings" type="button" aria-label="Settings">
             <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -72,7 +74,7 @@
           <div class="active-lobby-prompts" id="activeLobbyPrompts"></div>
           <div class="menu-actions">
             <button id="menuNewGame" type="button">New Game</button>
-            <button id="menuProfile" type="button">Profile</button>
+            <button id="menuProfile" type="button">Profile<span id="profileRewardBadge" class="level-reward-badge" hidden aria-hidden="true"></span></button>
             <button id="menuStore" type="button">Store</button>
             <button id="menuFriends" type="button">Friends</button>
             <button id="menuAchievements" type="button">Achievements</button>
@@ -92,11 +94,13 @@
               <path d="M8 12h1.8"></path>
               <path d="M14.2 12H16"></path>
             </svg>
+            <span id="progressionRewardBadge" class="level-reward-badge" hidden aria-hidden="true"></span>
           </button>
           <p class="eyebrow">Profile</p>
           <h1>Chopsticks &amp; Chai</h1>
           <p class="form-message" id="profileMessage"></p>
           <div class="profile-summary" id="profileSummary"></div>
+          <p id="profileRank" class="rank-summary"></p>
           <div class="level-panel">
             <div>
               <strong id="profileLevel">Level 1</strong>
@@ -163,10 +167,6 @@
               </div>
             </div>
           </div>
-          <label class="setting-row profile-field" id="profileTagField" hidden>
-            <span>Tag</span>
-            <input id="profileTag" maxlength="4" placeholder="A7K2">
-          </label>
           <div class="menu-actions">
             <button id="saveProfile" type="button">Save Profile</button>
             <button class="overwrite-action" id="deleteFirebaseAccount" type="button" hidden>Delete Account</button>
@@ -240,8 +240,8 @@
 
       <section class="menu-screen" id="notificationsScreen" hidden>
         <div class="menu-card store-card">
-          <p class="eyebrow">Notifications</p>
-          <h1>Inbox</h1>
+          <p class="eyebrow">Mailbox</p>
+          <h1>Notifications</h1>
           <div class="notification-list" id="notificationList"></div>
           <button class="overwrite-action" id="deleteAllNotifications" type="button">Delete All Messages</button>
           <button class="ghost-button" id="notificationsBack" type="button">Back</button>
@@ -302,7 +302,7 @@
             <span>Invite a player to play</span>
           </button>
           <div class="lobby-roster" id="lobbyRoster"></div>
-          <button class="chat-room-button" id="openLobbyChat" type="button">Open Chat Room</button>
+          <button class="chat-room-button" id="openLobbyChat" type="button">Open Chat Room<span id="lobbyChatBadge" class="chat-unread-badge" hidden aria-hidden="true"></span></button>
           <div class="menu-actions">
             <button class="save-action" id="readyLobbyGame" type="button" hidden>Ready</button>
             <button class="save-action" id="startLobbyGame" type="button" disabled>Start Game</button>
@@ -341,13 +341,32 @@
         </div>
       </section>
 
+      <section class="menu-screen" id="leaderboardScreen" hidden>
+        <div class="menu-card leaderboard-card">
+          <p class="eyebrow">Monthly Ranked Season · UTC</p><h1>Leaderboard</h1>
+          <p id="leaderboardOwnRank" class="rank-summary">Loading your rank…</p>
+          <label for="leaderboardRank">View rank</label>
+          <select id="leaderboardRank" aria-label="View another rank"></select>
+          <p id="leaderboardStatus" role="status"></p>
+          <ol id="leaderboardList" class="leaderboard-list"></ol>
+          <button class="ghost-button" id="leaderboardBack" type="button">Back</button>
+        </div>
+      </section>
+      <section class="menu-screen" id="rankedQueueScreen" hidden>
+        <div class="menu-card"><p class="eyebrow">Ranked · Standard Rules</p><h1>Finding a player</h1>
+          <p id="rankedQueueStatus" role="status">Joining the queue…</p>
+          <p>We look for a similar opponent first, then widen the search every 15 seconds.</p>
+          <button id="cancelRankedQueue" class="ghost-button" type="button">Cancel</button>
+        </div>
+      </section>
       <section class="menu-screen" id="modeScreen" hidden>
         <div class="menu-card">
           <p class="eyebrow">Choose Game Mode</p>
           <h1>Game Mode</h1>
           <div class="menu-actions">
             <button id="standardMode" type="button">Standard Mode</button>
-            <button id="powerMode" type="button">Power Up Mode</button>
+            <button id="powerMode" type="button" hidden>Power Up Mode</button>
+            <button id="rankedMode" type="button">Ranked Mode</button>
             <button class="ghost-button" id="modeBack" type="button">Back</button>
           </div>
         </div>
@@ -450,7 +469,9 @@
                 <li>You win when both opposing hands are knocked out.</li>
                 <li>Splits must keep the same total number of chopsticks across your two hands.</li>
                 <li>You cannot split into the exact same hand values or simply inverse them, such as changing 3-1 into 1-3.</li>
-                <li>Each turn has a 30 second timer. If the timer reaches 0, that player forfeits and the other player wins.</li>
+                <li>Each turn has a 30 second timer. If it expires before the match timer, that player forfeits and the other player wins.</li>
+                <li>Every mode also has a 10-minute Match Timer, shown at the top right. It starts with the match and does not reset between turns, on reconnect, or when reopening a saved game.</li>
+                <li>If the Match Timer reaches 0 first, both players draw. Draws grant no EXP, coins, rewards, or trophies, and do not change trophy totals or win/loss streaks. If both timers expire together, the match is a draw.</li>
                 <li>Win streaks are tracked separately for Play vs AI difficulties and Play vs Friends modes.</li>
               </ul>
             </section>
@@ -485,10 +506,11 @@
               <h2>Play vs Friends</h2>
               <ul>
                 <li>Invite a friend and play on separate devices.</li>
-                <li>Standard Play vs Friends and Power Up Play vs Friends each keep their own win streak.</li>
+                <li>Standard Play vs Friends keeps its own win streak.</li>
               </ul>
             </section>
 
+<!-- Power Up guide preserved for a future release.
             <section class="help-section">
               <h2>Power Up Mode</h2>
               <ul>
@@ -496,6 +518,36 @@
                 <li>Each player gains energy and draws power-up cards.</li>
                 <li>You can use one power-up and one normal action on your turn.</li>
                 <li>Power Up splits cannot revive a hand that is already at 0 chopsticks.</li>
+              </ul>
+            </section>
+-->
+            <section class="help-section">
+              <h2>Ranked Mode</h2>
+              <ul>
+                <li>Ranked uses Standard rules. Join the matchmaking queue to find an opponent; friend invites are for Standard games.</li>
+                <li>Everyone begins at Dirt with 0 trophies. Ranks are Dirt, Plain, Vanilla, Matcha, and Divine.</li>
+                <li>Reach 100 trophies within a rank to advance, carrying extra trophies forward. A loss that reaches 0 demotes you to the previous rank, carrying any deficit. Dirt cannot fall below 0. Divine has no upper limit.</li>
+                <li>Win / loss ranges: Dirt +15–21 / −7–10; Plain +13–19 / −9–13; Vanilla +11–17 / −11–16; Matcha +11–17 / −13–18; Divine +10–15 / −15–20.</li>
+                <li>Opponent strength uses overall trophies and win rates, with small samples weighted less. Stronger opponents mean bigger win gains and smaller losses. Your first 20 Ranked games give a small win bonus within these ranges. Values are fixed from stats at match start.</li>
+                <li>Forfeits and expired turn timers count as losses. Final moves finish the match immediately.</li>
+                <li>View your rank on Profile. Open Leaderboard from Home to see players in your rank or choose another rank. Players are sorted by trophies, then username for ties.</li>
+              </ul>
+            </section>
+            <section class="help-section">
+              <h2>Monthly Seasons</h2>
+              <ul>
+                <li>Seasons run from the first day of each month at 00:00 UTC to the start of the next month. A match finishing across the boundary counts toward the month it started.</li>
+                <li>Play at least one Ranked game that season to receive one reward for your highest rank reached: Dirt 100 gold + 1 Chai Special; Plain 250 + 2; Vanilla 500 + 3; Matcha 800 + 4; Divine 1,200 + 5. Rewards are added automatically after season settlement.</li>
+                <li>The season reset reduces overall trophies by 0% in Dirt, 10% in Plain, 15% in Vanilla, 20% in Matcha, and 25% in Divine, based on your ending rank. Remaining trophies are rounded to the nearest whole number and determine your new rank.</li>
+                <li>Overall trophies = rank starting total (0 / 100 / 200 / 300 / 400) + trophies within that rank. For example, Divine 45 is 445 overall; a 25% reduction leaves 334, or Matcha 34.</li>
+              </ul>
+            </section>
+
+
+            <section class="help-section">
+              <h2>Store</h2>
+              <ul>
+                <li>Avatars bought from the Store can be equipped by clicking your avatar on the Profile screen, then selecting an avatar you own.</li>
               </ul>
             </section>
           </div>
@@ -509,6 +561,8 @@
             <p class="eyebrow" id="gameModeLabel">Standard Game Mode</p>
             <h1>Chopsticks &amp; Chai</h1>
           </div>
+          <div class="game-header-right">
+            <div class="match-timer" id="matchTimer" role="timer" aria-label="Match Timer">Match Timer: 10:00</div>
           <div class="game-top-actions">
             <div class="turn-card">
               <small>Play on Same Device</small>
@@ -528,8 +582,10 @@
               </div>
             </div>
           </div>
+          </div>
         </section>
 
+        <p id="rankedSyncStatus" role="status" hidden></p>
         <section class="battlefield" aria-label="Battlefield">
           <article class="player-zone opponent-zone" id="player1Zone">
             <div class="player-header">
@@ -576,6 +632,7 @@
 
       <dialog class="game-over" id="gameOverDialog">
         <form method="dialog">
+          <div id="rankedResultHeader" class="ranked-result-header" hidden></div>
           <div class="game-over-avatar" id="gameOverAvatar"></div>
           <h2 id="winnerTitle">Player wins</h2>
           <p id="winnerText">Both opposing hands are dead.</p>
@@ -587,12 +644,11 @@
             <div class="level-bar reward-xp-bar"><span id="rewardXpFill"></span></div>
             <p id="rewardXpText"></p>
             <div class="coin-reward-row" id="coinRewardRow">
-              <span class="coin-pile" id="coinPile"></span>
+              <svg class="reward-chopsticks" id="coinPile" viewBox="0 0 64 58" role="img" aria-label="Chai over crossed chopsticks"><g stroke="#88552f" stroke-linejoin="round"><path d="M9 3 57 49Q60 53 55 55L5 8Q3 4 9 3Z" fill="#d99b59"/><path d="M55 3 7 49Q4 53 9 55L59 8Q61 4 55 3Z" fill="#e8b77c"/><path d="M45 24h6c10 0 8 13-2 13h-4" fill="#fff8ee" stroke-width="2.5"/><ellipse cx="31" cy="46" rx="18" ry="4" fill="#d9b693"/><path d="M15 24h32l-3 14c-3 14-22 14-26 0Z" fill="#fff8ee" stroke-width="2"/><ellipse cx="31" cy="24" rx="16" ry="5" fill="#f5dfbd" stroke-width="2"/><ellipse cx="31" cy="24" rx="12" ry="2.8" fill="#8b5835"/><path d="M26 33q3-5 5 0q3-5 5 0q1 4-5 7q-6-3-5-7Z" fill="#bd8559" stroke="none"/></g><path d="M30 16c-6-5 6-6 1-12M37 16c-4-3 4-4 2-7" stroke="#bc916e" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg>
               <strong id="rewardCoinText">Total: 0 <span class="coin-icon" aria-label="coin"></span> (+0 <span class="coin-icon" aria-label="coin"></span>)</strong>
             </div>
           </div>
           <button class="save-action" id="returnToLobby" value="lobby" type="submit" hidden>Return to Lobby</button>
-          <button class="game-over-new" id="newGame" value="new" type="submit">Start New Game</button>
           <button class="game-over-menu" id="gameOverMenu" value="menu" type="submit">Return to Main Menu</button>
         </form>
       </dialog>
@@ -762,7 +818,7 @@
         <form method="dialog">
           <h2>Add Friend</h2>
           <p class="form-message" id="addFriendMessage"></p>
-          <input id="friendUsername" maxlength="32" placeholder="friend#A7K2">
+          <input id="friendUsername" maxlength="18" placeholder="Friend username" aria-label="Friend username">
           <button id="addFriend" value="add" type="submit">Add Friend</button>
           <button class="ghost-button" value="cancel" type="submit">Back</button>
         </form>
@@ -797,7 +853,7 @@
       <dialog id="switchAccountDialog">
         <form method="dialog">
           <h2>Mock Account Switcher</h2>
-          <p>Switch accounts to test the receiving friend's inbox.</p>
+          <p>Switch accounts to test the receiving friend's notifications.</p>
           <div class="invite-friend-list" id="mockAccountList"></div>
           <button class="ghost-button" value="cancel" type="submit">Back</button>
         </form>
@@ -867,5 +923,15 @@
     </main>
 
     <script type="module" src="game.js"></script>
+  <dialog id="dailyRewardMailDialog" class="daily-mail-dialog">
+      <h2 id="questMailTitle">Daily quest rewards</h2>
+      <p id="dailyMailDate"></p>
+      <p id="questMailDescription">Your completed daily quests had unclaimed rewards. They are saved here for you.</p>
+      <div id="dailyMailDetails"></div>
+      <strong id="dailyMailTotal"></strong>
+      <button id="collectDailyMail" type="button">Collect rewards</button>
+      <p id="dailyMailError" role="status"></p>
+      <form method="dialog"><button type="submit">Close</button></form>
+    </dialog>
   </body>
 </html>

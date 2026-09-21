@@ -44,3 +44,23 @@ Signed-in account deletion removes:
 - owned `friends` and `notifications`,
 - reverse friend docs where rules allow the deleting user to remove themselves,
 - participant lobbies visible to the user, after deleting lobby messages.
+
+
+## Realtime Database presence
+
+Database: https://chopsticks-and-chai-default-rtdb.firebaseio.com/
+
+Publish the contents of `database.rules.json` under Firebase Console → Realtime Database → Rules. These are separate from Firestore rules. Signed-in users can read presence; each user can write only their own session records. No profile, email, or lobby data is stored here.
+
+The revised rules must be republished: each account has one `activeSession` owner ID. The first active session keeps ownership. A new login is rejected while the owner's connection record exists; the existing app and game are unaffected. Admission is atomic, so simultaneous sign-ins cannot both win. The rejected instance shows an explanation and signs out locally. A new login is allowed after logout or server disconnect cleanup removes the active connection record. An older disconnected app cannot reclaim ownership after another session has been admitted. Only the current owner's connection record determines availability.
+
+Disconnect cleanup removes only that session's connection record, so old-device cleanup cannot remove a new session. Logout and page exit close the connection. Switching tabs leaves it connected; mobile background suspension may disconnect it. Abrupt network failure detection follows Firebase's timeout and is not guaranteed within three seconds.
+
+Web authentication uses session persistence: closing the tab ends persisted login. A second normal tab starts at login. Refreshing establishes a fresh app instance, which can be admitted after the prior connection has been cleaned up; it cannot override a still-active record. Reload all app instances after publishing; older builds do not enforce admission correctly.
+
+This enforces session ownership in the app and rejects competing clients. It does not revoke Firebase tokens through a trusted backend or add session-token authorization to every Firestore operation; modified clients with previously issued credentials are outside this UI mechanism.
+
+Pending friend requests stay white until accepted or declined, including after they have been read.
+
+Validation: `node scripts/presence-test.mjs` and `npm run build`.
+After publishing, reload both test tabs. Sign in to the same account in both and verify the second login is rejected while the first stays connected. Log out of the first, then verify the second can sign in. Also test reconnect and delayed cleanup from an older device.

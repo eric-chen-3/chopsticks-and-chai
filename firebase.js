@@ -1,10 +1,14 @@
+import { expiredMatchResult, completedByClock } from "./functions/match-clock.js";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { sameMatch, mergeLobbyGame, validMatchEnding } from "./match-sync.js";
+import { getDatabase, get, ref, onValue, onDisconnect, runTransaction as runRealtimeTransaction, goOffline, goOnline } from "firebase/database";
+import { createPresenceSession, summarizeSessions, claimSession } from "./presence.js";
 import { initializeApp } from "firebase/app";
 import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
 import {
-  browserLocalPersistence,
+  browserSessionPersistence,
   createUserWithEmailAndPassword,
   deleteUser,
-  indexedDBLocalPersistence,
   initializeAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -17,9 +21,11 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   initializeFirestore,
   limit,
+  limitToLast,
   onSnapshot,
   orderBy,
   query,
@@ -33,6 +39,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyBTxpS2iWeqDpoQJYTCXWEVvGYfnKBRhAo",
   authDomain: "chopsticks-and-chai.firebaseapp.com",
   projectId: "chopsticks-and-chai",
+  databaseURL: "https://chopsticks-and-chai-default-rtdb.firebaseio.com",
   storageBucket: "chopsticks-and-chai.firebasestorage.app",
   messagingSenderId: "489064265036",
   appId: "1:489064265036:web:e660343c56471c40844be9",
@@ -43,7 +50,7 @@ const firestoreRestBase = `https://firestore.googleapis.com/v1/projects/${fireba
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = initializeAuth(firebaseApp, {
-  persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+  persistence: browserSessionPersistence,
 });
 export const db = initializeFirestore(firebaseApp, {
   experimentalForceLongPolling: true,
@@ -78,6 +85,7 @@ export async function signUpWithEmail(email, password, profile = {}) {
 }
 
 export async function signInWithEmail(email, password) {
+  sessionPresence.allowLogin();
   const credential = await signInWithEmailAndPassword(auth, email, password);
   return credential.user;
 }
@@ -93,6 +101,26 @@ export async function loadUserProfile(uid) {
   }
   const snapshot = await getDoc(doc(db, "users", uid));
   return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+}
+
+export function publicPlayerProfile(uid, profile) {
+  return {
+    uid, username: profile.username, tag: profile.tag || "",
+    selectedCharacterId: profile.selectedCharacterId || "honeyBear",
+    level: Math.max(1, Math.floor(Number(profile.economy?.level ?? profile.level) || 1)),
+  };
+}
+
+export function publishPlayerProfile(uid, profile) {
+  return setDoc(doc(db, "playerProfiles", uid), {
+    ...publicPlayerProfile(uid, profile), updatedAt: serverTimestamp(),
+  });
+}
+
+export function subscribeToPlayerProfile(uid, callback, onError) {
+  return onSnapshot(doc(db, "playerProfiles", uid), (snapshot) => {
+    callback(snapshot.exists() ? snapshot.data() : null);
+  }, onError);
 }
 
 export async function upsertUserProfile(uid, profile) {
@@ -135,19 +163,71 @@ export async function upsertUserProfile(uid, profile) {
         updatedAt: serverTimestamp(),
       }, { merge: true });
     }
+    transaction.set(doc(db, "playerProfiles", uid), { ...publicPlayerProfile(uid, profile), updatedAt: serverTimestamp() });
     transaction.set(doc(db, "users", uid), privateProfile);
   });
 }
 
+const presenceDb = getDatabase(firebaseApp);
+let serverTimeOffset = 0;
+onValue(ref(presenceDb, ".info/serverTimeOffset"), snapshot => {
+  serverTimeOffset = Number(snapshot.val()) || 0;
+});
+export const serverNow = () => Date.now() + serverTimeOffset;
+const sessionPresence = createPresenceSession({
+  watchConnection: (callback) => onValue(ref(presenceDb, ".info/connected"), (snapshot) => callback(snapshot.val() === true)),
+  newId: () => crypto.randomUUID(),
+  claim: async (uid, id, state) => {
+    const accountRef = ref(presenceDb, `presence/${uid}`);
+    await get(accountRef);
+    const result = await runRealtimeTransaction(accountRef,
+      (value) => claimSession(value, id, state), { applyLocally: false });
+    return result.committed && result.snapshot.child("activeSession").val() === id;
+  },
+  watchOwner: (uid, callback, onError) => onValue(ref(presenceDb, `presence/${uid}/activeSession`),
+    (snapshot) => callback(snapshot.val()), onError),
+  armDisconnect: (uid, id) => onDisconnect(ref(presenceDb, `presence/${uid}/sessions/${id}`)).remove(),
+  publish: async (uid, id, state) => {
+    const accountRef = ref(presenceDb, `presence/${uid}`);
+    await get(accountRef);
+    const result = await runRealtimeTransaction(accountRef, (value) => {
+      if (!value || value.activeSession !== id) return value;
+      return { activeSession: id, sessions: { [id]: state } };
+    }, { applyLocally: false });
+    return result.committed && result.snapshot.child("activeSession").val() === id;
+  },
+  connect: () => goOnline(presenceDb),
+  disconnect: () => goOffline(presenceDb),
+  onRejected: (uid) => {
+    if (auth.currentUser?.uid !== uid) return;
+    window.dispatchEvent(new CustomEvent("account-session-rejected"));
+    void signOut(auth).catch(console.warn);
+  },
+  onError: (error) => {
+    console.warn("Realtime session failed. Check Realtime Database rules.", error);
+    window.dispatchEvent(new CustomEvent("account-session-error"));
+    void signOut(auth).catch(console.warn);
+  },
+});
+
 export function updateUserPresence(uid, presence = {}) {
-  return setDoc(doc(db, "users", uid), {
-    presence: {
-      ...presence,
-      lastSeenAt: serverTimestamp(),
-    },
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
+  if (presence.online === false) return sessionPresence.stop();
+  return sessionPresence.update(uid, { inGame: Boolean(presence.inGame) });
 }
+
+export function stopUserPresence() {
+  return sessionPresence.stop();
+}
+
+export function subscribeToFriendPresence(uid, callback, onError) {
+  return onValue(ref(presenceDb, `presence/${uid}`), (snapshot) => {
+    callback(summarizeSessions(snapshot.val()));
+  }, onError);
+}
+
+// A background tab stays connected. Page exit disconnects this session only.
+window.addEventListener("pagehide", () => goOffline(presenceDb));
+window.addEventListener("pageshow", () => goOnline(presenceDb));
 
 export async function updateUserProfileTransaction(uid, updater) {
   const userRef = doc(db, "users", uid);
@@ -177,6 +257,7 @@ export async function updateUserProfileTransaction(uid, updater) {
         throw error;
       }
     }
+    transaction.set(doc(db, "playerProfiles", uid), { ...publicPlayerProfile(uid, next), updatedAt: serverTimestamp() });
     transaction.set(userRef, {
       ...sanitizeForFirestore(next),
       updatedAt: serverTimestamp(),
@@ -203,13 +284,11 @@ export function publicProfileId(username) {
   return String(username).trim().toLowerCase();
 }
 
-export async function findPublicProfile(username, tag) {
+export async function findPublicProfile(username) {
   const snapshot = await getDoc(doc(db, "publicProfiles", publicProfileId(username)));
   if (!snapshot.exists()) return null;
   const profile = { id: snapshot.id, ...snapshot.data() };
-  return tag && profile.tag && String(profile.tag).toUpperCase() !== String(tag).toUpperCase()
-    ? null
-    : profile;
+  return profile;
 }
 
 export async function isUsernameTaken(username) {
@@ -262,6 +341,7 @@ async function upsertUserProfileRest(user, profile) {
     writes.push(restUpdateWrite(["usernameHandles", username], usernameHandlePayload, usernameHandle ? "exists" : "missing"));
   }
 
+  writes.push(restUpdateWrite(["playerProfiles", user.uid], { ...publicPlayerProfile(user.uid, profile), updatedAt: timestamp }));
   await commitRestWrites(writes, token);
 }
 
@@ -443,8 +523,13 @@ export async function sendFirebaseFriendRequest(senderUid, senderProfile, recipi
   }, { merge: true });
 }
 
-export async function sendFirebaseGameInvite(lobby, recipientUid) {
-  await writeFirebaseLobby(lobby);
+export async function sendFirebaseGameInvite(lobby, recipientUid, { existing = false } = {}) {
+  if (existing) {
+    await writeFirebaseLobby(lobby);
+  } else {
+    // Missing lobbies cannot pass participant-only read rules. Create directly.
+    await setDoc(doc(db, "lobbies", lobby.id), sanitizeForFirestore(firebaseLobbyDocument(lobby)));
+  }
   await setDoc(doc(db, "users", recipientUid, "notifications", lobby.id), {
     id: lobby.id,
     type: "gameInvite",
@@ -499,8 +584,37 @@ function firebaseLobbyDocument(lobby) {
   };
 }
 
-export async function writeFirebaseLobby(lobby) {
-  await setDoc(doc(db, "lobbies", lobby.id), sanitizeForFirestore(firebaseLobbyDocument(lobby)), { merge: true });
+export async function writeFirebaseLobby(lobby, { syncGame = false } = {}) {
+  if (lobby.mode === "Ranked Mode") {
+    if (syncGame) await submitRankedState(lobby.id, lobby.gameState);
+    return;
+  }
+  const lobbyRef = doc(db, "lobbies", lobby.id);
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(lobbyRef);
+    const next = mergeLobbyGame(snapshot.data(), firebaseLobbyDocument(lobby), syncGame);
+    transaction.set(lobbyRef, sanitizeForFirestore(next), { merge: true });
+  });
+}
+
+export async function completeFirebaseMatch(lobbyId, finalState) {
+  if (finalState.mode === "Ranked Mode") return submitRankedState(lobbyId, finalState);
+  const lobbyRef = doc(db, "lobbies", lobbyId);
+  return runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(lobbyRef);
+    if (!snapshot.exists()) throw new Error("The match lobby is unavailable.");
+    const lobby = snapshot.data();
+    if (lobby.gameState && !sameMatch(lobby.gameState, finalState)) throw new Error("This match has already been replaced.");
+    if (lobby.gameState?.over && lobby.gameState.result) return lobby.gameState;
+    const expired = expiredMatchResult(lobby.gameState, serverNow());
+    const confirmed = expired ? completedByClock(lobby.gameState, expired) : finalState;
+    if (!validMatchEnding(lobby, confirmed, serverNow())) return lobby.gameState;
+    transaction.update(lobbyRef, sanitizeForFirestore({
+      status: "complete", activeGame: false, absentPlayers: {},
+      gameState: confirmed, lastGameStateAt: Date.now(),
+    }));
+    return confirmed;
+  });
 }
 
 export async function deleteFirebaseLobby(lobbyId) {
@@ -515,7 +629,7 @@ export async function deleteFirebaseLobbyMessages(lobbyId) {
 
 export function subscribeToLobbyMessages(lobbyId, callback, onError) {
   return onSnapshot(
-    query(collection(db, "lobbies", lobbyId, "messages"), orderBy("sentAt", "asc"), limit(40)),
+    query(collection(db, "lobbies", lobbyId, "messages"), orderBy("sentAt", "asc"), limitToLast(40)),
     (snapshot) => {
       callback(snapshot.docs.map((messageDoc) => ({ id: messageDoc.id, ...messageDoc.data() })));
     },
@@ -573,6 +687,7 @@ export async function removeFirebaseFriend(currentUid, friendUid) {
 export async function deleteFirebaseAccount(currentUser, profile = {}) {
   if (!currentUser) throw new Error("No signed-in Firebase user.");
   const uid = currentUser.uid;
+  await deleteDoc(doc(db, "playerProfiles", uid));
   const [friends, notifications, saves, lobbies] = await Promise.all([
     listFriends(uid),
     listNotifications(uid),
@@ -610,3 +725,18 @@ function sanitizeForFirestore(value) {
       .map(([key, item]) => [key, sanitizeForFirestore(item)]),
   );
 }
+
+const rankedFunctions = getFunctions(firebaseApp, "us-central1");
+export const rankedCall = async (name, data = {}) => (await httpsCallable(rankedFunctions, name)(data)).data;
+let rankedWrites = Promise.resolve();
+export function submitRankedState(matchId, state) {
+  const pending = rankedWrites.catch(() => {}).then(() => rankedCall("rankedMove", {matchId, state}));
+  rankedWrites = pending;
+  pending.then(confirmed => window.dispatchEvent(new CustomEvent("ranked-state", {detail:confirmed}))).catch(error => {
+    window.dispatchEvent(new CustomEvent("ranked-sync-error", {detail:{matchId, message:error.message}}));
+  });
+  return pending;
+}
+export const watchRankedProfile = (uid, callback, error) => onSnapshot(doc(db, "rankedPlayers", uid), snap => callback(snap.exists() ? snap.data() : null), error);
+export const watchRankedLeaderboard = (rank, callback, error) => onSnapshot(query(collection(db, "rankedPlayers"), where("rank", "==", rank)), snap => callback(snap.docs.map(d => ({uid:d.id,...d.data()}))), error);
+export const getRankedLobby = async id => { const snap=await getDocFromServer(doc(db,"lobbies",id)); return snap.exists()?{id:snap.id,...snap.data()}:null; };
